@@ -51,7 +51,7 @@ func (c *ClientAdapter) GetDeviceJID() string {
 
 func (c *ClientAdapter) PairPhone(ctx context.Context, phone string, clientDisplayName string) (string, error) {
 	if clientDisplayName == "" {
-		clientDisplayName = "Chrome (Coolify)"
+		clientDisplayName = "Chrome (Linux)"
 	}
 	return c.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, clientDisplayName)
 }

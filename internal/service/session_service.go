@@ -35,7 +35,7 @@ func NewSessionService(
 	clientName string,
 ) *SessionServiceImpl {
 	if clientName == "" {
-		clientName = "Chrome (Coolify)"
+		clientName = "Chrome (Linux)"
 	}
 	s := &SessionServiceImpl{
 		client:       client,
@@ -76,7 +76,7 @@ func (s *SessionServiceImpl) GetStatus(ctx context.Context) (domain.SessionStatu
 	state := domain.StateDisconnected
 	if s.client.IsConnected() {
 		state = domain.StateConnected
-	} else if len(s.needsPairing) > 0 {
+	} else if len(s.needsPairing) > 0 || s.lastPairCode != "" {
 		state = domain.StatePairing
 	}
 
@@ -106,6 +106,13 @@ func (s *SessionServiceImpl) RequestPairing(ctx context.Context, req domain.Pair
 		s.clientName = req.ClientName
 	}
 	s.mu.Unlock()
+
+	if !s.client.IsConnected() {
+		if err := s.client.Connect(); err != nil {
+			return "", fmt.Errorf("failed to connect to WhatsApp before pairing: %w", err)
+		}
+		time.Sleep(1500 * time.Millisecond)
+	}
 
 	code, err := s.client.PairPhone(ctx, req.PhoneNumber, s.clientName)
 	if err != nil {
@@ -209,6 +216,7 @@ func (s *SessionServiceImpl) requestPairingWithRetry(ctx context.Context, phone 
 				time.Sleep(10 * time.Second)
 				continue
 			}
+			time.Sleep(1500 * time.Millisecond)
 		}
 
 		code, err := s.client.PairPhone(ctx, phone, s.clientName)

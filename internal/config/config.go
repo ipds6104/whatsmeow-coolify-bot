@@ -34,7 +34,7 @@ func LoadConfig() *Config {
 		Port:              getEnv("PORT", "8080"),
 		DatabaseURL:       getEnv("DATABASE_URL", defaultDBURL),
 		WAPhoneNumber:     cleanPhone(getEnv("WA_PHONE_NUMBER", "")),
-		WAClientName:      getEnv("WA_CLIENT_NAME", "Chrome (Coolify)"),
+		WAClientName:      getEnv("WA_CLIENT_NAME", "Chrome (Linux)"),
 		DiscordWebhookURL: getEnv("DISCORD_WEBHOOK_URL", ""),
 		APIKey:            getEnv("API_KEY", ""),
 		AntibanPreset:     getEnv("ANTIBAN_PRESET", "moderate"),
