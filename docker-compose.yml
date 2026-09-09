@@ -70,9 +70,7 @@ services:
       - POSTGRES_HOST_AUTH_METHOD=trust
     volumes:
       # PENTING: Volume ini WAJIB persisten di Coolify agar sesi WhatsApp tidak hilang saat restart / redeploy
-      - wa_pgdata_v2:/var/lib/postgresql/data
-      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-    command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+      - wa_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -92,8 +90,8 @@ services:
           - whatsmeow-postgres
 
 volumes:
-  wa_pgdata_v2:
-    name: wa_pgdata_v2
+  wa_data:
+    name: wa_data
   wa_backups:
     name: wa_backups
 
