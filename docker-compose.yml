@@ -40,12 +40,12 @@ services:
       start_period: 15s
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
       - "traefik.http.routers.wa-bot.rule=Host(`${SERVICE_FQDN_WHATSAPP_BOT:-${COOLIFY_FQDN:-localhost}}`)"
-      - "traefik.http.routers.wa-bot.entrypoints=websecure"
+      - "traefik.http.routers.wa-bot.entrypoints=https,http"
       - "traefik.http.routers.wa-bot.tls=true"
       - "traefik.http.routers.wa-bot.tls.certresolver=letsencrypt"
       - "traefik.http.services.wa-bot.loadbalancer.server.port=8080"
-      - "traefik.http.routers.wa-bot.middlewares=compress@docker"
     logging:
       driver: "json-file"
       options:
