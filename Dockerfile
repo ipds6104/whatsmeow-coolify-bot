@@ -37,7 +37,7 @@ RUN apk add --no-cache ca-certificates tzdata curl ffmpeg && \
 # Create persistent storage directories with appropriate permissions
 RUN mkdir -p /app/backups && chown -R appuser:appgroup /app
 
-COPY --from=builder /build/bot /app/bot
+COPY --from=builder --chown=appuser:appgroup /build/bot /app/bot
 
 USER appuser
 

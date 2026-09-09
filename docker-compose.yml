@@ -12,6 +12,11 @@ services:
       - "8080"
     environment:
       - PORT=8080
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_secure_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-whatsmeow}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
       - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_secure_pass}@postgres:5432/${POSTGRES_DB:-whatsmeow}?sslmode=disable
       - WA_PHONE_NUMBER=${WA_PHONE_NUMBER}
       - WA_CLIENT_NAME=${WA_CLIENT_NAME:-Chrome (Coolify)}
@@ -77,7 +82,11 @@ services:
         max-size: "20m"
         max-file: "3"
     networks:
-      - internal_net
+      internal_net:
+        aliases:
+          - postgres
+          - db
+          - whatsmeow-postgres
 
 volumes:
   wa_pgdata:

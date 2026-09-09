@@ -22,15 +22,23 @@ type Config struct {
 
 // LoadConfig reads configuration from the OS environment with secure production defaults.
 func LoadConfig() *Config {
+	pgUser := getEnv("POSTGRES_USER", "postgres")
+	pgPass := getEnv("POSTGRES_PASSWORD", "postgres_secure_pass")
+	pgHost := getEnv("POSTGRES_HOST", "postgres")
+	pgPort := getEnv("POSTGRES_PORT", "5432")
+	pgDB := getEnv("POSTGRES_DB", "whatsmeow")
+
+	defaultDBURL := "postgres://" + pgUser + ":" + pgPass + "@" + pgHost + ":" + pgPort + "/" + pgDB + "?sslmode=disable"
+
 	cfg := &Config{
 		Port:              getEnv("PORT", "8080"),
-		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@postgres:5432/whatsmeow?sslmode=disable"),
+		DatabaseURL:       getEnv("DATABASE_URL", defaultDBURL),
 		WAPhoneNumber:     cleanPhone(getEnv("WA_PHONE_NUMBER", "")),
 		WAClientName:      getEnv("WA_CLIENT_NAME", "Chrome (Coolify)"),
 		DiscordWebhookURL: getEnv("DISCORD_WEBHOOK_URL", ""),
 		APIKey:            getEnv("API_KEY", ""),
 		AntibanPreset:     getEnv("ANTIBAN_PRESET", "moderate"),
-		BackupDir:         getEnv("BACKUP_DIR", "./backups"),
+		BackupDir:         getEnv("BACKUP_DIR", "/app/backups"),
 		LogLevel:          getEnv("LOG_LEVEL", "INFO"),
 		CoolifyFQDN:       getEnv("SERVICE_FQDN_WHATSAPP_BOT", getEnv("COOLIFY_FQDN", "")),
 	}

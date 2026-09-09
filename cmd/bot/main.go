@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -42,32 +41,29 @@ func main() {
 
 	waLogger := waLog.Stdout("Whatsmeow", cfg.LogLevel, true)
 
-	// 1. Database Connection (Postgres)
-	db, err := sql.Open("pgx", cfg.DatabaseURL)
+	// 1. Database Connection (Postgres) with Retry & Auto-creation
+	db, err := postgres.ConnectWithRetry(ctx, cfg.DatabaseURL, 15)
 	if err != nil {
-		log.Fatalf("Fatal: failed to connect to PostgreSQL: %v", err)
+		log.Fatalf("Fatal: PostgreSQL connection failed after retries: %v", err)
 	}
 	defer db.Close()
 
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(10 * time.Minute)
-	db.SetConnMaxIdleTime(5 * time.Minute)
-
-	if err := db.PingContext(ctx); err != nil {
-		log.Fatalf("Fatal: PostgreSQL ping failed: %v", err)
-	}
-
 	// 2. Whatsmeow SqlStore Container & Schema Upgrade
+	log.Println("[WHATSMEOW] Initializing SqlStore container...")
 	container := sqlstore.NewWithDB(db, "pgx", waLogger)
+
+	log.Println("[WHATSMEOW] Running schema upgrade...")
 	if err := container.Upgrade(ctx); err != nil {
 		log.Fatalf("Fatal: failed to upgrade whatsmeow schema: %v", err)
 	}
+	log.Println("[WHATSMEOW] Schema upgrade completed successfully.")
 
+	log.Println("[WHATSMEOW] Retrieving primary device store...")
 	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		log.Fatalf("Fatal: failed to retrieve device store: %v", err)
 	}
+	log.Printf("[WHATSMEOW] Device store loaded (hasSession: %v)", device.ID != nil)
 
 	rawClient := whatsmeow.NewClient(device, waLogger)
 
@@ -76,14 +72,18 @@ func main() {
 	notifier := discord.NewNotifier(cfg.DiscordWebhookURL)
 	guard := antiban.NewGuard(cfg.AntibanPreset)
 	pgStore := postgres.NewStore(db)
+
+	log.Println("[MIGRATE] Running database chat_messages migration...")
 	if err := pgStore.Migrate(ctx); err != nil {
 		log.Fatalf("Fatal: database migration failed: %v", err)
 	}
 
+	log.Printf("[BACKUP] Initializing backup store at: %s", cfg.BackupDir)
 	backupStore, err := backup.NewFileStore(cfg.BackupDir)
 	if err != nil {
 		log.Fatalf("Fatal: failed to initialize backup file store: %v", err)
 	}
+	log.Println("[BACKUP] Backup file store ready.")
 
 	// 4. Domain & Application Services
 	sessionService := service.NewSessionService(

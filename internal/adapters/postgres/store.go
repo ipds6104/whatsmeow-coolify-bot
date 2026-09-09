@@ -25,28 +25,29 @@ func NewStore(db *sql.DB) *Store {
 
 // Migrate creates necessary tables and indexes for message persistence and backup queries.
 func (s *Store) Migrate(ctx context.Context) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS chat_messages (
-		id VARCHAR(128) PRIMARY KEY,
-		chat_jid VARCHAR(128) NOT NULL,
-		sender_jid VARCHAR(128) NOT NULL,
-		sender_name TEXT,
-		timestamp TIMESTAMPTZ NOT NULL,
-		is_from_me BOOLEAN NOT NULL,
-		text TEXT,
-		media_type VARCHAR(64),
-		has_media BOOLEAN NOT NULL DEFAULT FALSE,
-		media_info JSONB,
-		raw_data JSONB,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	);
-	CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_ts ON chat_messages(chat_jid, timestamp DESC);
-	`
-	_, err := s.db.ExecContext(ctx, query)
-	if err != nil {
-		return fmt.Errorf("postgres migration failed: %w", err)
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS chat_messages (
+			id VARCHAR(128) PRIMARY KEY,
+			chat_jid VARCHAR(128) NOT NULL,
+			sender_jid VARCHAR(128) NOT NULL,
+			sender_name TEXT,
+			timestamp TIMESTAMPTZ NOT NULL,
+			is_from_me BOOLEAN NOT NULL,
+			text TEXT,
+			media_type VARCHAR(64),
+			has_media BOOLEAN NOT NULL DEFAULT FALSE,
+			media_info JSONB,
+			raw_data JSONB,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_ts ON chat_messages(chat_jid, timestamp DESC)`,
 	}
-	log.Println("database chat_messages schema ready")
+	for i, q := range queries {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("postgres migration query %d failed: %w", i+1, err)
+		}
+	}
+	log.Println("[MIGRATE] Database chat_messages schema ready")
 	return nil
 }
 
