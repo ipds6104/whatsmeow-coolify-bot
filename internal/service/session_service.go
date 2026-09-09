@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,10 +75,19 @@ func (s *SessionServiceImpl) GetStatus(ctx context.Context) (domain.SessionStatu
 	defer s.mu.RUnlock()
 
 	state := domain.StateDisconnected
-	if s.client.IsConnected() {
+	var actionNeeded string
+
+	if s.client.IsConnected() && s.client.IsLoggedIn() {
 		state = domain.StateConnected
-	} else if len(s.needsPairing) > 0 || s.lastPairCode != "" {
-		state = domain.StatePairing
+	} else if !s.client.IsLoggedIn() {
+		state = domain.StateWaitingPairing
+		if s.lastPairCode != "" {
+			actionNeeded = fmt.Sprintf("Buka WhatsApp HP ➔ Perangkat Tertaut ➔ Tautkan dengan nomor telepon ➔ Masukkan kode: %s", s.lastPairCode)
+		} else {
+			actionNeeded = "Menunggu kode pairing. Pantau channel Discord Anda atau panggil POST /api/v1/session/pair"
+		}
+	} else if s.client.IsConnected() {
+		state = domain.StateConnected
 	}
 
 	return domain.SessionStatus{
@@ -91,6 +101,7 @@ func (s *SessionServiceImpl) GetStatus(ctx context.Context) (domain.SessionStatu
 		Uptime:       time.Since(s.startedAt).Round(time.Second).String(),
 		LastSeen:     s.lastSeen,
 		LastPairCode: s.lastPairCode,
+		ActionNeeded: actionNeeded,
 	}, nil
 }
 
@@ -116,6 +127,10 @@ func (s *SessionServiceImpl) RequestPairing(ctx context.Context, req domain.Pair
 
 	code, err := s.client.PairPhone(ctx, req.PhoneNumber, s.clientName)
 	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "429") || strings.Contains(errStr, "rate-overlimit") {
+			return "", fmt.Errorf("WhatsApp rate-limit (429): server WhatsApp membatasi permintaan kode untuk nomor ini. Mohon tunggu cooldown ~5-10 menit sebelum mencoba lagi")
+		}
 		return "", fmt.Errorf("pairing request failed: %w", err)
 	}
 
@@ -203,6 +218,8 @@ func (s *SessionServiceImpl) requestPairingWithRetry(ctx context.Context, phone 
 	const maxAttempts = 20
 	interval := 3 * time.Minute
 
+	_ = s.notifier.Notify(ctx, fmt.Sprintf("⏳ **Menginisialisasi WhatsApp Pairing...**\nNomor: `%s`\nSedang meminta kode pairing 8-digit ke server WhatsApp...", phone))
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -222,7 +239,14 @@ func (s *SessionServiceImpl) requestPairingWithRetry(ctx context.Context, phone 
 		code, err := s.client.PairPhone(ctx, phone, s.clientName)
 		if err != nil {
 			log.Printf("PairPhone attempt %d error: %v", attempt, err)
-			time.Sleep(30 * time.Second)
+			errStr := err.Error()
+			if strings.Contains(errStr, "429") || strings.Contains(errStr, "rate-overlimit") {
+				_ = s.notifier.Notify(ctx, fmt.Sprintf("⏳ **WhatsApp Rate Limit (429 Cooldown)**: WhatsApp server membatasi frekuensi pairing untuk nomor `%s`.\nSistem otomatis menunggu cooldown 5 menit agar WhatsApp membuka blokir kembali...", phone))
+				time.Sleep(5 * time.Minute)
+			} else {
+				_ = s.notifier.Notify(ctx, fmt.Sprintf("⚠️ Percobaan pairing #%d belum berhasil: `%v`. Mencoba ulang dalam 30 detik...", attempt, err))
+				time.Sleep(30 * time.Second)
+			}
 			continue
 		}
 
@@ -236,7 +260,7 @@ func (s *SessionServiceImpl) requestPairingWithRetry(ctx context.Context, phone 
 		for time.Now().Before(waitUntil) {
 			if s.client.IsLoggedIn() {
 				log.Println("Pairing berhasil terkonfirmasi!")
-				_ = s.notifier.Notify(ctx, ":tada: WhatsApp berhasil di-link!")
+				_ = s.notifier.Notify(ctx, ":tada: **WhatsApp berhasil ditautkan!** Bot kini aktif dan siap menerima pesan/perintah.")
 				return nil
 			}
 			time.Sleep(5 * time.Second)

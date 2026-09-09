@@ -9,8 +9,9 @@ const (
 	StateDisconnected SessionState = "DISCONNECTED"
 	StateConnecting   SessionState = "CONNECTING"
 	StateConnected    SessionState = "CONNECTED"
-	StatePairing      SessionState = "PAIRING"
-	StateLoggedOut    SessionState = "LOGGED_OUT"
+	StatePairing        SessionState = "PAIRING"
+	StateWaitingPairing SessionState = "WAITING_PAIRING"
+	StateLoggedOut      SessionState = "LOGGED_OUT"
 )
 
 // SessionStatus holds comprehensive runtime details about the current WhatsApp session.
@@ -25,6 +26,7 @@ type SessionStatus struct {
 	Uptime       string       `json:"uptime"`
 	LastSeen     time.Time    `json:"last_seen,omitempty"`
 	LastPairCode string       `json:"last_pair_code,omitempty"`
+	ActionNeeded string       `json:"action_needed,omitempty"`
 }
 
 // PairingRequest defines the input required to initiate phone number pairing.

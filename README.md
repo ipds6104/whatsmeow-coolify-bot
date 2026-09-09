@@ -188,7 +188,7 @@ Di tab **Environment Variables** Coolify, tambahkan variabel berikut:
 ```env
 PORT=8080
 WA_PHONE_NUMBER=6281234567890
-WA_CLIENT_NAME=Chrome (Coolify)
+WA_CLIENT_NAME=Chrome (Linux)
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/.../...
 API_KEY=kunci-rahasia-anda-yang-aman
 ANTIBAN_PRESET=moderate
@@ -199,21 +199,31 @@ COOLIFY_FQDN=wa.domainanda.com
 ```
 
 ### 4. Pastikan Persistent Volume Aktif
-Periksa tab **Storages** di service `postgres` Coolify:
-- Pastikan volume `wa_pgdata` terpasang di mount path `/var/lib/postgresql/data`.
+Periksa tab **Storages** di service `wa-postgres` Coolify:
+- Pastikan volume `wa_data` terpasang di mount path `/var/lib/postgresql/data`.
 - Ini adalah kunci utama agar sesi tidak hilang ketika kontainer di-restart.
 
-### 5. Deploy & Pairing Pertama Kali
+### 5. Deploy & Pairing Pertama Kali (Onboarding UX)
 1. Klik tombol **Deploy** di Coolify.
 2. Tunggu ~1 menit hingga image selesai dibangun dan kontainer berstatus **healthy**.
-3. Cek notifikasi di Discord:
-   - Notifikasi startup akan masuk: `:rocket: whatsmeow-coolify-bot berhasil dijalankan di Coolify!`.
-   - Kode pairing 8 digit akan dikirimkan otomatis ke channel Discord Anda.
-4. Buka WhatsApp di ponsel Anda:
-   - Buka **Setelan** / **Settings** ➔ **Perangkat Tertaut (Linked Devices)**.
-   - Pilih **Tautkan Perangkat** ➔ Pilih **Tautkan dengan nomor telepon saja**.
-   - Masukkan kode 8 digit yang muncul di Discord.
-5. Selesai! Bot kini aktif secara permanen dan siap melayani permintaan via REST API.
+3. Cek channel Discord Anda, bot akan mengirimkan urutan pesan onboarding:
+   - **Notifikasi 1**: `:rocket: whatsmeow-coolify-bot berhasil dijalankan di Coolify!`
+   - **Notifikasi 2**: `⏳ Menginisialisasi WhatsApp Pairing...`
+   - **Notifikasi 3**: Embed hijau berisi **Kode Pairing 8 Digit** (misal: `ABCD-1234`).
+4. Buka WhatsApp di smartphone Anda:
+   - Buka **Setelan (Settings)** ➔ **Perangkat Tertaut (Linked Devices)**.
+   - Pilih **Tautkan Perangkat (Link a Device)**.
+   - Pilih opsi di bawah: **"Tautkan dengan nomor telepon saja" (*Link with phone number instead*)**.
+   - Masukkan kode 8 digit yang dikirim bot ke Discord.
+5. Bot akan memancarkan notifikasi `:tada: WhatsApp berhasil ditautkan!`. Sesi kini aktif permanen!
+
+> [!TIP]
+> **Troubleshooting Onboarding**:
+> - **Error 429 (`rate-overlimit`)**: Jika Anda melihat notifikasi cooldown 429 di Discord atau log, WhatsApp server sedang membatasi frekuensi pairing untuk nomor tersebut. Cukup biarkan bot berjalan; bot akan menunggu cooldown secara otomatis dan mencoba kembali tanpa perlu di-restart.
+> - **Pengecekan Status via API**: Anda dapat memantau status pairing kapan saja dengan menjalankan:
+>   `curl https://wa.domainanda.com/api/v1/session/status` (field `last_pair_code` dan `action_needed` akan memandu tindakan Anda).
+> - **Picu Ulang Manual**: Anda juga dapat memicu kode baru secara manual lewat:
+>   `curl -X POST https://wa.domainanda.com/api/v1/session/pair -H "Content-Type: application/json" -d '{"phone_number": "628xxx"}'`.
 
 ---
 
