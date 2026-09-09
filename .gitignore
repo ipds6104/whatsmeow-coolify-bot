@@ -21,6 +21,5 @@ backups/*.bin
 *~
 .DS_Store
 
-# Go vendor / coverage
-vendor/
+# Coverage
 coverage.out

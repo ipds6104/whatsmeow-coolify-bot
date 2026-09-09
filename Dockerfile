@@ -5,19 +5,16 @@ FROM golang:1.26-alpine AS builder
 
 WORKDIR /build
 
-# Install build tools and CA certificates
-RUN apk add --no-cache git ca-certificates
-
-# Cache dependencies
+# Copy dependency specifications and vendored modules (100% offline, hermetic build)
 COPY go.mod go.sum ./
-RUN go mod download
+COPY vendor/ ./vendor/
 
-# Copy source files
+# Copy application source files
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
-# Build static binary with optimizations
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -trimpath -o /build/bot ./cmd/bot
+# Build static binary with optimizations using vendored dependencies
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags="-w -s" -trimpath -o /build/bot ./cmd/bot
 
 # ==========================================
 # Stage 2: Minimal Production Runtime
@@ -26,12 +23,11 @@ FROM alpine:3.20
 
 WORKDIR /app
 
-# Install runtime utilities:
-# - ca-certificates: TLS verification for WhatsApp servers
+# Install essential runtime utilities:
+# - ca-certificates: TLS verification for WhatsApp websocket servers
 # - tzdata: Accurate timestamps in backups and logs
-# - curl: Health check probe for Traefik and Coolify
-# - ffmpeg: Optional audio transcode support for WhatsApp voice notes (PTT)
-RUN apk add --no-cache ca-certificates tzdata curl ffmpeg && \
+# - curl: Healthcheck probe for Traefik and Coolify
+RUN apk add --no-cache ca-certificates tzdata curl && \
     addgroup -S appgroup && adduser -S appuser -G appgroup
 
 # Create persistent storage directories with appropriate permissions
@@ -44,7 +40,7 @@ USER appuser
 EXPOSE 8080
 
 # Coolify / Docker Container Healthcheck
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=20s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -f http://localhost:8080/healthz || exit 1
 
 ENTRYPOINT ["/app/bot"]
