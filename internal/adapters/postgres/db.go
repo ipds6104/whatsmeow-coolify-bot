@@ -57,6 +57,7 @@ func ConnectWithRetry(ctx context.Context, databaseURL string, maxAttempts int) 
 
 		if pingErr == nil {
 			log.Printf("[DB] PostgreSQL connection verified and ping successful!")
+			syncPasswordIfConfigured(ctx, db, databaseURL)
 			return db, nil
 		}
 
@@ -232,4 +233,23 @@ func SanitizeURL(rawURL string) string {
 		}
 	}
 	return u.String()
+}
+
+func syncPasswordIfConfigured(ctx context.Context, db *sql.DB, targetURL string) {
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		return
+	}
+	pass, hasPass := u.User.Password()
+	username := u.User.Username()
+	if !hasPass || pass == "" || username == "" {
+		return
+	}
+	escapedPass := strings.ReplaceAll(pass, "'", "''")
+	alterQuery := fmt.Sprintf("ALTER USER \"%s\" WITH PASSWORD '%s';", username, escapedPass)
+	if _, err := db.ExecContext(ctx, alterQuery); err != nil {
+		log.Printf("[DB] Notice: Could not sync password via ALTER USER: %v", err)
+	} else {
+		log.Printf("[DB] User credentials synchronized in PostgreSQL cluster.")
+	}
 }
