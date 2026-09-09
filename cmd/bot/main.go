@@ -52,6 +52,7 @@ func main() {
 	db.SetMaxOpenConns(20)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(10 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	if err := db.PingContext(ctx); err != nil {
 		log.Fatalf("Fatal: PostgreSQL ping failed: %v", err)

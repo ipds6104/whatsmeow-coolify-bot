@@ -5,6 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: whatsmeow-coolify-bot
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
     ports:
       - "${PORT:-8080}:8080"
     environment:
@@ -26,10 +29,10 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 30s
-      timeout: 10s
+      interval: 20s
+      timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 15s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.wa-bot.rule=Host(`${SERVICE_FQDN_WHATSAPP_BOT:-${COOLIFY_FQDN:-localhost}}`)"
@@ -38,14 +41,23 @@ services:
       - "traefik.http.routers.wa-bot.tls.certresolver=letsencrypt"
       - "traefik.http.services.wa-bot.loadbalancer.server.port=8080"
       - "traefik.http.routers.wa-bot.middlewares=compress@docker"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "15m"
+        max-file: "3"
     networks:
       - internal_net
       - coolify
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.8-alpine
     container_name: whatsmeow-postgres
     restart: unless-stopped
+    # Alokasi shared memory untuk queries & cache buffers
+    shm_size: 512mb
+    # Waktu toleransi graceful shutdown untuk menyelesaikan flush data & WAL
+    stop_grace_period: 1m30s
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_secure_pass}
@@ -54,11 +66,16 @@ services:
       # PENTING: Volume ini WAJIB persisten di Coolify agar sesi WhatsApp tidak hilang saat restart / redeploy
       - wa_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-whatsmeow}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     networks:
       - internal_net
 

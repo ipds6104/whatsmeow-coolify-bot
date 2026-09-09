@@ -17,7 +17,7 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
 # Build static binary with optimizations
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /build/bot ./cmd/bot
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -trimpath -o /build/bot ./cmd/bot
 
 # ==========================================
 # Stage 2: Minimal Production Runtime
