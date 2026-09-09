@@ -24,7 +24,7 @@ type Config struct {
 func LoadConfig() *Config {
 	pgUser := getEnv("POSTGRES_USER", "postgres")
 	pgPass := getEnv("POSTGRES_PASSWORD", "postgres_secure_pass")
-	pgHost := getEnv("POSTGRES_HOST", "postgres")
+	pgHost := getEnv("POSTGRES_HOST", "wa-postgres")
 	pgPort := getEnv("POSTGRES_PORT", "5432")
 	pgDB := getEnv("POSTGRES_DB", "whatsmeow")
 
