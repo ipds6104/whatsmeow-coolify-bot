@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
 )
@@ -41,6 +42,8 @@ type AntiBanGuardPort interface {
 	WaitSendPermit(ctx context.Context, targetJID string) error
 	RecordMessageSent(targetJID string)
 	GetWarmupStats() map[string]interface{}
+	PruneStale(olderThan time.Duration) int
+	ResetDaily()
 }
 
 // BackupStorePort defines the outbound port for persisting and retrieving chat backup archives.
@@ -48,4 +51,5 @@ type BackupStorePort interface {
 	SaveBackup(ctx context.Context, result domain.BackupResult, data []byte) error
 	ReadBackup(ctx context.Context, backupID string) (domain.BackupResult, []byte, error)
 	ListBackups(ctx context.Context) ([]domain.BackupResult, error)
+	PurgeOldBackups(ctx context.Context, retention time.Duration) (int, error)
 }

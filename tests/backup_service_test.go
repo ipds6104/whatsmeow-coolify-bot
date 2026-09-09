@@ -87,3 +87,34 @@ func TestBackupService_CreateAndRetrieve(t *testing.T) {
 		t.Errorf("expected 1 backup listed, got %d", len(list))
 	}
 }
+
+func TestBackupService_PurgeOldBackups(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wa_backup_purge_*")
+	if err != nil {
+		t.Fatalf("temp dir err: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	fileStore, err := backup.NewFileStore(tempDir)
+	if err != nil {
+		t.Fatalf("file store err: %v", err)
+	}
+
+	mockCli := &MockClient{connected: true, loggedIn: true}
+	mockStore := &MockStore{}
+	backupSvc := service.NewBackupService(mockCli, mockStore, fileStore)
+
+	ctx := context.Background()
+	_, err = backupSvc.BackupGroupChat(ctx, domain.BackupRequest{ChatJID: "123@g.us", Limit: 10})
+	if err != nil {
+		t.Fatalf("backup err: %v", err)
+	}
+
+	purged, err := backupSvc.PurgeOldBackups(ctx, -1*time.Second)
+	if err != nil {
+		t.Fatalf("purge err: %v", err)
+	}
+	if purged < 1 {
+		t.Errorf("expected at least 1 purged file, got %d", purged)
+	}
+}

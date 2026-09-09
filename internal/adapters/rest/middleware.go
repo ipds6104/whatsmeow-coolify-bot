@@ -38,6 +38,9 @@ func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 				key = strings.TrimPrefix(authHeader, "Bearer ")
 			}
 		}
+		if key == "" {
+			key = r.URL.Query().Get("api_key")
+		}
 
 		if key != apiKey {
 			WriteError(w, http.StatusUnauthorized, "invalid or missing API key")

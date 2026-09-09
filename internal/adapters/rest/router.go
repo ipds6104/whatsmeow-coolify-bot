@@ -27,6 +27,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 
 	// Session management endpoints
 	mux.HandleFunc("GET /api/v1/session/status", sessionH.GetStatus)
+	mux.HandleFunc("GET /api/v1/session/qr", sessionH.GetQRCode)
 	mux.HandleFunc("POST /api/v1/session/pair", sessionH.RequestPairing)
 	mux.HandleFunc("POST /api/v1/session/disconnect", sessionH.Disconnect)
 

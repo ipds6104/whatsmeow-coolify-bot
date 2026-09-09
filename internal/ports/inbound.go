@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
 )
@@ -10,6 +11,8 @@ import (
 type SessionService interface {
 	Start(ctx context.Context) error
 	GetStatus(ctx context.Context) (domain.SessionStatus, error)
+	GetQRCode(ctx context.Context) (domain.QRCodeResult, error)
+	SetQRCode(code string)
 	RequestPairing(ctx context.Context, req domain.PairingRequest) (string, error)
 	Disconnect(ctx context.Context) error
 	SupervisorLoop(ctx context.Context)
@@ -30,4 +33,5 @@ type BackupService interface {
 	BackupGroupChat(ctx context.Context, req domain.BackupRequest) (domain.BackupResult, error)
 	GetBackup(ctx context.Context, backupID string) (domain.BackupResult, []byte, error)
 	ListBackups(ctx context.Context) ([]domain.BackupResult, error)
+	PurgeOldBackups(ctx context.Context, retention time.Duration) (int, error)
 }

@@ -146,6 +146,31 @@ func (g *Guard) GetWarmupStats() map[string]interface{} {
 	}
 }
 
+// PruneStale evicts recipient timestamps older than the specified duration to prevent unbounded memory growth.
+func (g *Guard) PruneStale(olderThan time.Duration) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	threshold := time.Now().Add(-olderThan)
+	pruned := 0
+	for jid, t := range g.lastSentTimes {
+		if t.Before(threshold) {
+			delete(g.lastSentTimes, jid)
+			pruned++
+		}
+	}
+	return pruned
+}
+
+// ResetDaily forcefully resets the daily message counter and updates currentDay.
+func (g *Guard) ResetDaily() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.currentDay = time.Now().YearDay()
+	g.dailyCount = 0
+}
+
 func (g *Guard) randomJitter(min, max time.Duration) time.Duration {
 	delta := max - min
 	if delta <= 0 {

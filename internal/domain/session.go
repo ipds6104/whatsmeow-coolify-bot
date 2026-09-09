@@ -34,3 +34,11 @@ type PairingRequest struct {
 	PhoneNumber string `json:"phone_number"` // Format: 6281234567890
 	ClientName  string `json:"client_name,omitempty"`
 }
+
+// QRCodeResult encapsulates live WhatsApp QR code state.
+type QRCodeResult struct {
+	QRCode       string `json:"qr_code"`
+	IsLoggedIn   bool   `json:"is_logged_in"`
+	ExpiresInSec int    `json:"expires_in_sec"`
+	PairingCode  string `json:"pairing_code,omitempty"`
+}

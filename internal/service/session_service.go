@@ -22,6 +22,8 @@ type SessionServiceImpl struct {
 	startedAt    time.Time
 	needsPairing chan struct{}
 	lastPairCode string
+	lastQRCode   string
+	qrExpiresAt  time.Time
 	lastSeen     time.Time
 	mu           sync.RWMutex
 }
@@ -102,6 +104,39 @@ func (s *SessionServiceImpl) GetStatus(ctx context.Context) (domain.SessionStatu
 		LastSeen:     s.lastSeen,
 		LastPairCode: s.lastPairCode,
 		ActionNeeded: actionNeeded,
+	}, nil
+}
+
+// SetQRCode updates the live QR code and its expiration timestamp.
+func (s *SessionServiceImpl) SetQRCode(code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.lastQRCode = code
+	s.qrExpiresAt = time.Now().Add(25 * time.Second)
+}
+
+// GetQRCode returns the active QR code or status indicating if client is already paired.
+func (s *SessionServiceImpl) GetQRCode(ctx context.Context) (domain.QRCodeResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.client.IsLoggedIn() {
+		return domain.QRCodeResult{
+			IsLoggedIn: true,
+		}, nil
+	}
+
+	expiresIn := int(time.Until(s.qrExpiresAt).Seconds())
+	if expiresIn < 0 {
+		expiresIn = 0
+	}
+
+	return domain.QRCodeResult{
+		QRCode:       s.lastQRCode,
+		IsLoggedIn:   false,
+		ExpiresInSec: expiresIn,
+		PairingCode:  s.lastPairCode,
 	}, nil
 }
 

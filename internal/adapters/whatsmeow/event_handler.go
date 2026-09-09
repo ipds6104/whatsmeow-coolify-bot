@@ -53,6 +53,12 @@ func (h *EventHandler) HandleEvent(rawEvt interface{}) {
 		h.sessionService.UpdateLastSeen()
 		_ = h.notifier.Notify(ctx, fmt.Sprintf(":tada: **Pairing berhasil!** Device `%s` aktif kembali.", evt.ID.String()))
 
+	case *events.QR:
+		if len(evt.Codes) > 0 {
+			log.Printf("[WHATSMEOW] QR Code diterima dari WhatsApp server (panjang string: %d)", len(evt.Codes[0]))
+			h.sessionService.SetQRCode(evt.Codes[0])
+		}
+
 	case *events.Message:
 		h.sessionService.UpdateLastSeen()
 		h.handleIncomingMessage(ctx, evt)

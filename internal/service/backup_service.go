@@ -110,3 +110,7 @@ func (b *BackupServiceImpl) GetBackup(ctx context.Context, backupID string) (dom
 func (b *BackupServiceImpl) ListBackups(ctx context.Context) ([]domain.BackupResult, error) {
 	return b.backup.ListBackups(ctx)
 }
+
+func (b *BackupServiceImpl) PurgeOldBackups(ctx context.Context, retention time.Duration) (int, error) {
+	return b.backup.PurgeOldBackups(ctx, retention)
+}

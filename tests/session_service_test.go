@@ -185,3 +185,23 @@ func TestSessionService_Disconnect(t *testing.T) {
 		t.Errorf("expected client to be disconnected")
 	}
 }
+
+func TestSessionService_QRCode(t *testing.T) {
+	mockCli := &MockClient{loggedIn: false}
+	mockNotif := &MockNotifier{}
+	mockStore := &MockStore{}
+
+	svc := service.NewSessionService(mockCli, mockNotif, mockStore, "6281234567890", "TestBot")
+	svc.SetQRCode("2@mock_qr_code_string,1234,5678")
+
+	qr, err := svc.GetQRCode(context.Background())
+	if err != nil {
+		t.Fatalf("get qr error: %v", err)
+	}
+	if qr.IsLoggedIn {
+		t.Errorf("expected not logged in")
+	}
+	if qr.QRCode != "2@mock_qr_code_string,1234,5678" {
+		t.Errorf("unexpected qr code: %s", qr.QRCode)
+	}
+}

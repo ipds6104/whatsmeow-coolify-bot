@@ -106,6 +106,18 @@ func main() {
 		backupStore,
 	)
 
+	schedulerService := service.NewSchedulerService(
+		guard,
+		backupService,
+		notifier,
+		sessionService,
+		service.SchedulerConfig{
+			RetentionDays:   cfg.BackupRetentionDays,
+			ScheduledGroups: cfg.BackupScheduledGroups,
+			IntervalHours:   cfg.BackupIntervalHours,
+		},
+	)
+
 	// 5. Inbound Whatsmeow Event Handler
 	evtHandler := waAdapter.NewEventHandler(sessionService, notifier, pgStore)
 	clientAdapter.AddEventHandler(evtHandler.HandleEvent)
@@ -134,12 +146,13 @@ func main() {
 		}
 	}()
 
-	// 7. Start Session Service & Supervisor Loop
+	// 7. Start Session Service, Supervisor, & Scheduler
 	if err := sessionService.Start(ctx); err != nil {
 		log.Printf("[WARN] Session service start returned error: %v", err)
 	}
 
 	go sessionService.SupervisorLoop(ctx)
+	schedulerService.Start(ctx)
 
 	_ = notifier.Notify(ctx, fmt.Sprintf(":rocket: **whatsmeow-coolify-bot** berhasil dijalankan di Coolify!\nPort: `%s` | Anti-ban: `%s`", cfg.Port, cfg.AntibanPreset))
 

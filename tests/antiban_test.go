@@ -65,6 +65,23 @@ func TestAntiBanGuard_DailyCap(t *testing.T) {
 	}
 }
 
+func TestAntiBanGuard_PruneStaleAndReset(t *testing.T) {
+	guard := antiban.NewGuard("relaxed")
+	target := "6281234567890@s.whatsapp.net"
+	guard.RecordMessageSent(target)
+
+	pruned := guard.PruneStale(-1 * time.Second)
+	if pruned != 1 {
+		t.Errorf("expected 1 pruned entry, got %d", pruned)
+	}
+
+	guard.ResetDaily()
+	stats := guard.GetWarmupStats()
+	if stats["daily_count"] != 0 {
+		t.Errorf("expected daily count 0 after reset, got %v", stats["daily_count"])
+	}
+}
+
 func isError(err, target error) bool {
 	if err == nil {
 		return target == nil

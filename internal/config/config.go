@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -14,10 +15,13 @@ type Config struct {
 	WAClientName      string
 	DiscordWebhookURL string
 	APIKey            string
-	AntibanPreset     string
-	BackupDir         string
-	LogLevel          string
-	CoolifyFQDN       string
+	AntibanPreset         string
+	BackupDir             string
+	BackupRetentionDays   int
+	BackupScheduledGroups []string
+	BackupIntervalHours   int
+	LogLevel              string
+	CoolifyFQDN           string
 }
 
 // LoadConfig reads configuration from the OS environment with secure production defaults.
@@ -30,17 +34,31 @@ func LoadConfig() *Config {
 
 	defaultDBURL := "postgres://" + pgUser + ":" + pgPass + "@" + pgHost + ":" + pgPort + "/" + pgDB + "?sslmode=disable"
 
+	rawGroups := getEnv("BACKUP_SCHEDULED_GROUPS", "")
+	var scheduledGroups []string
+	if rawGroups != "" {
+		for _, g := range strings.Split(rawGroups, ",") {
+			trimmed := strings.TrimSpace(g)
+			if trimmed != "" {
+				scheduledGroups = append(scheduledGroups, trimmed)
+			}
+		}
+	}
+
 	cfg := &Config{
-		Port:              getEnv("PORT", "8080"),
-		DatabaseURL:       getEnv("DATABASE_URL", defaultDBURL),
-		WAPhoneNumber:     cleanPhone(getEnv("WA_PHONE_NUMBER", "")),
-		WAClientName:      getEnv("WA_CLIENT_NAME", "Chrome (Linux)"),
-		DiscordWebhookURL: getEnv("DISCORD_WEBHOOK_URL", ""),
-		APIKey:            getEnv("API_KEY", ""),
-		AntibanPreset:     getEnv("ANTIBAN_PRESET", "moderate"),
-		BackupDir:         getEnv("BACKUP_DIR", "/app/backups"),
-		LogLevel:          getEnv("LOG_LEVEL", "INFO"),
-		CoolifyFQDN:       getEnv("SERVICE_FQDN_WHATSAPP_BOT", getEnv("COOLIFY_FQDN", "")),
+		Port:                  getEnv("PORT", "8080"),
+		DatabaseURL:           getEnv("DATABASE_URL", defaultDBURL),
+		WAPhoneNumber:         cleanPhone(getEnv("WA_PHONE_NUMBER", "")),
+		WAClientName:          getEnv("WA_CLIENT_NAME", "Chrome (Linux)"),
+		DiscordWebhookURL:     getEnv("DISCORD_WEBHOOK_URL", ""),
+		APIKey:                getEnv("API_KEY", ""),
+		AntibanPreset:         getEnv("ANTIBAN_PRESET", "moderate"),
+		BackupDir:             getEnv("BACKUP_DIR", "/app/backups"),
+		BackupRetentionDays:   getEnvInt("BACKUP_RETENTION_DAYS", 30),
+		BackupScheduledGroups: scheduledGroups,
+		BackupIntervalHours:   getEnvInt("BACKUP_INTERVAL_HOURS", 24),
+		LogLevel:              getEnv("LOG_LEVEL", "INFO"),
+		CoolifyFQDN:           getEnv("SERVICE_FQDN_WHATSAPP_BOT", getEnv("COOLIFY_FQDN", "")),
 	}
 
 	if cfg.WAPhoneNumber == "" {
@@ -67,4 +85,16 @@ func cleanPhone(phone string) string {
 	phone = strings.ReplaceAll(phone, "-", "")
 	phone = strings.ReplaceAll(phone, " ", "")
 	return phone
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	valStr := getEnv(key, "")
+	if valStr == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(valStr)
+	if err != nil {
+		return defaultVal
+	}
+	return n
 }

@@ -102,7 +102,8 @@ Semua endpoint dilindungi oleh middleware autentikasi jika `API_KEY` dikonfigura
 | Method | Endpoint | Deskripsi |
 |---|---|---|
 | `GET` | `/api/v1/session/status` | Cek status koneksi, pairing, JID, uptime, dan info device |
-| `POST` | `/api/v1/session/pair` | Memicu generate pairing code baru untuk nomor tertentu |
+| `GET` | `/api/v1/session/qr` | Tampilan Web Live QR Code (Browser) atau JSON data untuk pemindaian instan |
+| `POST` | `/api/v1/session/pair` | Memicu generate pairing code 8-digit baru untuk nomor tertentu |
 | `POST` | `/api/v1/session/disconnect` | Memutus koneksi WhatsApp secara terkontrol |
 
 **Contoh Request Pairing Manual:**
@@ -112,7 +113,7 @@ curl -X POST https://wa.domainkamu.com/api/v1/session/pair \
   -H "X-API-Key: your-api-key" \
   -d '{
     "phone_number": "6281234567890",
-    "client_name": "Chrome (Coolify)"
+    "client_name": "Chrome (Linux)"
   }'
 ```
 
@@ -203,29 +204,46 @@ Periksa tab **Storages** di service `wa-postgres` Coolify:
 - Pastikan volume `wa_data` terpasang di mount path `/var/lib/postgresql/data`.
 - Ini adalah kunci utama agar sesi tidak hilang ketika kontainer di-restart.
 
-### 5. Deploy & Pairing Pertama Kali (Onboarding UX)
+### 5. Deploy & Pairing Pertama Kali (Dual-Onboarding UX)
 1. Klik tombol **Deploy** di Coolify.
 2. Tunggu ~1 menit hingga image selesai dibangun dan kontainer berstatus **healthy**.
-3. Cek channel Discord Anda, bot akan mengirimkan urutan pesan onboarding:
-   - **Notifikasi 1**: `:rocket: whatsmeow-coolify-bot berhasil dijalankan di Coolify!`
-   - **Notifikasi 2**: `⏳ Menginisialisasi WhatsApp Pairing...`
-   - **Notifikasi 3**: Embed hijau berisi **Kode Pairing 8 Digit** (misal: `ABCD-1234`).
-4. Buka WhatsApp di smartphone Anda:
-   - Buka **Setelan (Settings)** ➔ **Perangkat Tertaut (Linked Devices)**.
-   - Pilih **Tautkan Perangkat (Link a Device)**.
-   - Pilih opsi di bawah: **"Tautkan dengan nomor telepon saja" (*Link with phone number instead*)**.
-   - Masukkan kode 8 digit yang dikirim bot ke Discord.
-5. Bot akan memancarkan notifikasi `:tada: WhatsApp berhasil ditautkan!`. Sesi kini aktif permanen!
+3. Pilih salah satu dari dua metode onboarding instan:
+
+#### Opsi A: Scan Live QR Code (Paling Cepat & Anti-Rate Limit)
+- Buka browser ke: `https://wa.domainanda.com/api/v1/session/qr` (atau tambahkan `?api_key=your-key` jika API Key disetel).
+- Halaman web responsif akan menampilkan **Live QR Code** yang auto-refresh setiap 3 detik.
+- Buka WhatsApp HP ➔ **Perangkat Tertaut** ➔ **Tautkan Perangkat** ➔ Arahkan kamera ke layar.
+- **Keunggulan**: Langsung terhubung dalam hitungan detik tanpa dipengaruhi limitasi kuota SMS/kode pairing telepon!
+
+#### Opsi B: Pairing Code 8-Digit via Discord Webhook
+- Pantau channel Discord Anda, bot akan mengirimkan urutan pesan onboarding:
+  - **Notifikasi 1**: `:rocket: whatsmeow-coolify-bot berhasil dijalankan di Coolify!`
+  - **Notifikasi 2**: `⏳ Menginisialisasi WhatsApp Pairing...`
+  - **Notifikasi 3**: Embed hijau berisi **Kode Pairing 8 Digit** (misal: `ABCD-1234`).
+- Buka WhatsApp HP ➔ **Perangkat Tertaut** ➔ **Tautkan dengan nomor telepon saja** ➔ Masukkan 8 digit kode.
 
 > [!TIP]
 > **Troubleshooting Onboarding**:
-> - **Error 429 (`rate-overlimit`)**: Jika Anda melihat notifikasi cooldown 429 di Discord atau log, WhatsApp server sedang membatasi frekuensi pairing untuk nomor tersebut. Cukup biarkan bot berjalan; bot akan menunggu cooldown secara otomatis dan mencoba kembali tanpa perlu di-restart.
+> - **Bypass Error 429 (`rate-overlimit`)**: Jika nomor telepon Anda terkena limitasi cooldown 429 dari WhatsApp, **cukup buka URL web QR code (`/api/v1/session/qr`) di browser Anda dan pindai QR code langsung dari HP**. Scan QR menggunakan jalur negosiasi terpisah sehingga tidak terpengaruh oleh rate limit nomor telepon!
 > - **Pengecekan Status via API**: Anda dapat memantau status pairing kapan saja dengan menjalankan:
->   `curl https://wa.domainanda.com/api/v1/session/status` (field `last_pair_code` dan `action_needed` akan memandu tindakan Anda).
+>   `curl https://wa.domainanda.com/api/v1/session/status` (field `action_needed` akan memandu tindakan Anda).
 > - **Picu Ulang Manual**: Anda juga dapat memicu kode baru secara manual lewat:
 >   `curl -X POST https://wa.domainanda.com/api/v1/session/pair -H "Content-Type: application/json" -d '{"phone_number": "628xxx"}'`.
 
 ---
+
+## ⏰ Background Maintenance Engine & Scheduler
+
+Bot dilengkapi dengan *Lightweight In-Process Maintenance Engine* otonom:
+1. **Anti-Ban Memory Hygiene**:
+   - Membersihkan rekam jejak timestamp penerima di memori setiap 15 menit (`PruneStale`).
+   - Mencegah kebocoran memori (*memory leak*) meskipun bot melayani ribuan nomor kontak selama berbulan-bulan.
+2. **Deterministic Midnight Reset**:
+   - Me-reset kuota kirim harian (`dailyCount`) tepat pukul 00:00 setiap malam dan mencatat metrik ke log.
+3. **Backup Storage Housekeeping**:
+   - Memangkas (*purge*) file arsip backup JSON lama yang melewati batas retensi (`BACKUP_RETENTION_DAYS`, default 30 hari).
+4. **Automated Group Backup**:
+   - Jika `BACKUP_SCHEDULED_GROUPS` diisi dengan daftar JID grup (dipisahkan koma), engine akan mengekspor backup riwayat obrolan secara otomatis sesuai interval (`BACKUP_INTERVAL_HOURS`, default 24 jam) dan mengirim laporan ke Discord.
 
 ## 🛡️ Anti-Ban Guard Presets
 

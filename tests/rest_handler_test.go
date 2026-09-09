@@ -134,3 +134,28 @@ func TestREST_CreateGroupBackup(t *testing.T) {
 		t.Errorf("expected status 201, got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
+
+func TestREST_GetQRCode(t *testing.T) {
+	router := setupTestRouter(t, "secret-key-123")
+
+	// Test JSON format
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session/qr?format=json", nil)
+	req.Header.Set("X-API-Key", "secret-key-123")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	// Test HTML format
+	reqHTML := httptest.NewRequest(http.MethodGet, "/api/v1/session/qr", nil)
+	reqHTML.Header.Set("X-API-Key", "secret-key-123")
+	reqHTML.Header.Set("Accept", "text/html")
+	wHTML := httptest.NewRecorder()
+	router.ServeHTTP(wHTML, reqHTML)
+
+	if wHTML.Code != http.StatusOK {
+		t.Errorf("expected status 200 for HTML view, got %d", wHTML.Code)
+	}
+}

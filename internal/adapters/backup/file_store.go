@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/ports"
@@ -101,4 +102,36 @@ func (f *FileStore) ListBackups(ctx context.Context) ([]domain.BackupResult, err
 	}
 
 	return results, nil
+}
+
+// PurgeOldBackups removes backup files and metadata older than the specified retention window.
+func (f *FileStore) PurgeOldBackups(ctx context.Context, retention time.Duration) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	entries, err := os.ReadDir(f.baseDir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read backup dir: %w", err)
+	}
+
+	threshold := time.Now().Add(-retention)
+	purged := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(threshold) {
+			filePath := filepath.Join(f.baseDir, entry.Name())
+			if err := os.Remove(filePath); err == nil {
+				purged++
+			}
+		}
+	}
+
+	return purged, nil
 }
