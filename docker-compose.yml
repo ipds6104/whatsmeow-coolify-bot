@@ -69,7 +69,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-whatsmeow}
     volumes:
       # PENTING: Volume ini WAJIB persisten di Coolify agar sesi WhatsApp tidak hilang saat restart / redeploy
-      - wa_pgdata:/var/lib/postgresql/data
+      - wa_pgdata_v2:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -89,8 +89,8 @@ services:
           - whatsmeow-postgres
 
 volumes:
-  wa_pgdata:
-    name: wa_pgdata
+  wa_pgdata_v2:
+    name: wa_pgdata_v2
   wa_backups:
     name: wa_backups
 
