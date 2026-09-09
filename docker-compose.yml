@@ -17,7 +17,8 @@ services:
       - ANTIBAN_PRESET=${ANTIBAN_PRESET:-moderate}
       - BACKUP_DIR=/app/backups
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - COOLIFY_FQDN=${COOLIFY_FQDN}
+      - COOLIFY_FQDN=${SERVICE_FQDN_WHATSAPP_BOT:-${COOLIFY_FQDN}}
+      - SERVICE_FQDN_WHATSAPP_BOT=${SERVICE_FQDN_WHATSAPP_BOT}
     volumes:
       - wa_backups:/app/backups
     depends_on:
@@ -31,7 +32,7 @@ services:
       start_period: 20s
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.wa-bot.rule=Host(`${COOLIFY_FQDN}`)"
+      - "traefik.http.routers.wa-bot.rule=Host(`${SERVICE_FQDN_WHATSAPP_BOT:-${COOLIFY_FQDN:-localhost}}`)"
       - "traefik.http.routers.wa-bot.entrypoints=websecure"
       - "traefik.http.routers.wa-bot.tls=true"
       - "traefik.http.routers.wa-bot.tls.certresolver=letsencrypt"

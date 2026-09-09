@@ -32,7 +32,7 @@ func LoadConfig() *Config {
 		AntibanPreset:     getEnv("ANTIBAN_PRESET", "moderate"),
 		BackupDir:         getEnv("BACKUP_DIR", "./backups"),
 		LogLevel:          getEnv("LOG_LEVEL", "INFO"),
-		CoolifyFQDN:       getEnv("COOLIFY_FQDN", ""),
+		CoolifyFQDN:       getEnv("SERVICE_FQDN_WHATSAPP_BOT", getEnv("COOLIFY_FQDN", "")),
 	}
 
 	if cfg.WAPhoneNumber == "" {

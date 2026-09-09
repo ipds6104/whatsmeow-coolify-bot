@@ -1,6 +1,6 @@
 # Binaries & build artifacts
 bin/
-bot
+/bot
 *.exe
 *.test
 *.out
