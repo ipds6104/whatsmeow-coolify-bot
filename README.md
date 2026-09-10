@@ -124,6 +124,7 @@ curl -X POST https://wa.domainkamu.com/api/v1/session/pair \
 | `POST` | `/api/v1/messages/send-media` | Kirim media (Multipart form atau Base64 JSON) |
 | `POST` | `/api/v1/media/download` | Unduh file terenkripsi dari CDN WhatsApp |
 | `GET` | `/api/v1/chats/{jid}/messages` | Ambil riwayat percakapan dari database lokal |
+| `GET` | `/api/v1/antiban/stats` | Melihat statistik real-time anti-ban (kuota hari ini, delay jitter, kuota cap) |
 
 **Contoh Kirim Pesan Teks:**
 ```bash

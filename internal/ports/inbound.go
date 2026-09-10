@@ -26,6 +26,7 @@ type WhatsAppService interface {
 	GetGroupInfo(ctx context.Context, groupJID string) (domain.GroupInfo, error)
 	DownloadMedia(ctx context.Context, info domain.MediaDownloadInfo) ([]byte, string, error)
 	GetRecentMessages(ctx context.Context, chatJID string, limit int) ([]domain.ChatMessage, error)
+	GetAntiBanStats() map[string]interface{}
 }
 
 // BackupService defines the inbound driving port for creating and managing chat backups.

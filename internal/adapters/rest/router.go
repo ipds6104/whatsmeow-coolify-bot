@@ -36,6 +36,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/messages/send-media", msgH.SendMedia)
 	mux.HandleFunc("POST /api/v1/media/download", msgH.DownloadMedia)
 	mux.HandleFunc("GET /api/v1/chats/{jid}/messages", msgH.GetChatMessages)
+	mux.HandleFunc("GET /api/v1/antiban/stats", msgH.GetAntiBanStats)
 
 	// Group management endpoints
 	mux.HandleFunc("GET /api/v1/groups", groupH.ListGroups)

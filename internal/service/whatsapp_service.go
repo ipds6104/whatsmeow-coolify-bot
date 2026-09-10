@@ -139,3 +139,7 @@ func (w *WhatsAppServiceImpl) DownloadMedia(ctx context.Context, info domain.Med
 func (w *WhatsAppServiceImpl) GetRecentMessages(ctx context.Context, chatJID string, limit int) ([]domain.ChatMessage, error) {
 	return w.store.GetMessages(ctx, chatJID, limit)
 }
+
+func (w *WhatsAppServiceImpl) GetAntiBanStats() map[string]interface{} {
+	return w.guard.GetWarmupStats()
+}

@@ -154,3 +154,9 @@ func (h *MessageHandler) GetChatMessages(w http.ResponseWriter, r *http.Request)
 
 	WriteJSON(w, http.StatusOK, messages)
 }
+
+// GetAntiBanStats exposes live diagnostic metrics from the anti-ban guard.
+func (h *MessageHandler) GetAntiBanStats(w http.ResponseWriter, r *http.Request) {
+	stats := h.waService.GetAntiBanStats()
+	WriteJSON(w, http.StatusOK, stats)
+}

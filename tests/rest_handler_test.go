@@ -159,3 +159,30 @@ func TestREST_GetQRCode(t *testing.T) {
 		t.Errorf("expected status 200 for HTML view, got %d", wHTML.Code)
 	}
 }
+
+func TestREST_GetAntiBanStats(t *testing.T) {
+	router := setupTestRouter(t, "secret-key-123")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/antiban/stats", nil)
+	req.Header.Set("X-API-Key", "secret-key-123")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to parse json response: %v", err)
+	}
+
+	data, ok := resp["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected data field in response")
+	}
+
+	if data["preset"] != "relaxed" {
+		t.Errorf("expected preset relaxed, got %v", data["preset"])
+	}
+}
