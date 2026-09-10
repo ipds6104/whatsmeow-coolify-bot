@@ -78,7 +78,8 @@ func (n *Notifier) NotifyPairingCode(ctx context.Context, code string, attempt i
 		Fields: []discordField{
 			{Name: "Percobaan", Value: fmt.Sprintf("#%d / 20", attempt), Inline: true},
 			{Name: "Masa Berlaku", Value: "~3 Menit", Inline: true},
-			{Name: "Langkah", Value: "Buka WA di HP ➔ Titik Tiga / Pengaturan ➔ Perangkat Tertaut ➔ Tautkan dengan nomor telepon ➔ Masukkan kode di atas", Inline: false},
+			{Name: "Langkah di HP", Value: "Buka WA di HP ➔ Setelan ➔ Perangkat Tertaut ➔ Tautkan dengan nomor telepon ➔ Masukkan kode di atas", Inline: false},
+			{Name: "Tautan Cepat (One-Click)", Value: "[📲 Buka WhatsApp Perangkat Tertaut](https://wa.me/settings/linked_devices) • [📷 Scan QR Scanner Web](https://wa.dvlpid.my.id/api/v1/session/qr)", Inline: false},
 		},
 		Footer:    &discordFooter{Text: "whatsmeow-coolify-bot • Auto-Pairing System"},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
