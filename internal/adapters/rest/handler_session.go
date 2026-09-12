@@ -141,6 +141,11 @@ func renderQRHTML(qr domain.QRCodeResult) string {
 		qrURL = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=%s", url.QueryEscape(qr.QRCode))
 	}
 
+	timerText := fmt.Sprintf("Rotasi QR berikutnya dalam: <b>%d detik</b>", qr.ExpiresInSec)
+	if qr.ExpiresInSec <= 0 {
+		timerText = `<span style="color: #f15c6d;">Menghubungkan ulang ke server WhatsApp untuk memuat QR baru...</span>`
+	}
+
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -169,7 +174,7 @@ func renderQRHTML(qr domain.QRCodeResult) string {
 		<div class="qr-box">
 			<img src="%s" alt="WhatsApp QR Code" />
 		</div>
-		<div class="timer">Rotasi QR berikutnya dalam: <b>%d detik</b></div>
+		<div class="timer">%s</div>
 		<div class="pairing-box">
 			<div style="font-size: 12px; color: #8696a0; margin-bottom: 4px;">Atau Kode Pairing:</div>
 			<div class="code">%s</div>
@@ -185,5 +190,5 @@ func renderQRHTML(qr domain.QRCodeResult) string {
 		</div>
 	</div>
 </body>
-</html>`, qrURL, qr.ExpiresInSec, qr.PairingCode)
+</html>`, qrURL, timerText, qr.PairingCode)
 }

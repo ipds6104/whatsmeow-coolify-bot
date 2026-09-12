@@ -118,14 +118,29 @@ func (s *SessionServiceImpl) SetQRCode(code string) {
 
 // GetQRCode returns the active QR code or status indicating if client is already paired.
 func (s *SessionServiceImpl) GetQRCode(ctx context.Context) (domain.QRCodeResult, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if s.client.IsLoggedIn() {
 		return domain.QRCodeResult{
 			IsLoggedIn: true,
 		}, nil
 	}
+
+	// Reconnect if socket closed so WhatsApp generates fresh QR codes
+	if !s.client.IsConnected() {
+		log.Println("[WHATSMEOW] Client disconnected saat request QR, menyambungkan ulang...")
+		_ = s.client.Connect()
+		for i := 0; i < 15; i++ {
+			time.Sleep(100 * time.Millisecond)
+			s.mu.RLock()
+			fresh := time.Until(s.qrExpiresAt) > 0 && s.lastQRCode != ""
+			s.mu.RUnlock()
+			if fresh {
+				break
+			}
+		}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	expiresIn := int(time.Until(s.qrExpiresAt).Seconds())
 	if expiresIn < 0 {
@@ -225,7 +240,11 @@ func (s *SessionServiceImpl) SupervisorLoop(ctx context.Context) {
 
 		case <-ticker.C:
 			if !s.client.IsLoggedIn() {
-				continue // Waiting for user pairing
+				if !s.client.IsConnected() {
+					log.Println("Session waiting for pairing disconnected, reconnecting for fresh QR...")
+					_ = s.client.Connect()
+				}
+				continue
 			}
 
 			if s.client.IsConnected() {
