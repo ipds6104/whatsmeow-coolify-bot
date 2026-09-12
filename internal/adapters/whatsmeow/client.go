@@ -49,6 +49,13 @@ func (c *ClientAdapter) GetDeviceJID() string {
 	return ""
 }
 
+func (c *ClientAdapter) GetDeviceLID() string {
+	if c.client.Store != nil && !c.client.Store.LID.IsEmpty() {
+		return c.client.Store.LID.ToNonAD().String()
+	}
+	return ""
+}
+
 func (c *ClientAdapter) PairPhone(ctx context.Context, phone string, clientDisplayName string) (string, error) {
 	if clientDisplayName == "" {
 		clientDisplayName = "Chrome (Linux)"

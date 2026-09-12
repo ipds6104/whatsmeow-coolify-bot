@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -394,6 +395,43 @@ func (h *EventHandler) forwardToWebhook(
 		payload["mentioned_jids"] = mentionedJIDs
 		payload["mentions"] = mentionedJIDs
 	}
+
+	// Extract bot device JID and LID to determine if the bot itself was explicitly mentioned
+	var deviceJID, deviceLID string
+	if h.sessionService != nil {
+		deviceJID = h.sessionService.GetDeviceJID()
+		deviceLID = h.sessionService.GetDeviceLID()
+	}
+
+	botJIDClean := ""
+	if deviceJID != "" {
+		botJIDClean = strings.Split(deviceJID, "@")[0]
+		botJIDClean = strings.Split(botJIDClean, ":")[0]
+	}
+	botLIDClean := ""
+	if deviceLID != "" {
+		botLIDClean = strings.Split(deviceLID, "@")[0]
+		botLIDClean = strings.Split(botLIDClean, ":")[0]
+	}
+
+	isBotMentioned := false
+	for _, m := range mentionedJIDs {
+		if (botJIDClean != "" && strings.Contains(m, botJIDClean)) || (botLIDClean != "" && strings.Contains(m, botLIDClean)) {
+			isBotMentioned = true
+			break
+		}
+	}
+	if botLIDClean != "" && strings.Contains(msg.Text, "@"+botLIDClean) {
+		isBotMentioned = true
+	}
+
+	if deviceJID != "" {
+		payload["bot_jid"] = deviceJID
+	}
+	if deviceLID != "" {
+		payload["bot_lid"] = deviceLID
+	}
+	payload["is_bot_mentioned"] = isBotMentioned
 
 	body, err := json.Marshal(payload)
 	if err != nil {

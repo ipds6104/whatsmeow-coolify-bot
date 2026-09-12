@@ -42,6 +42,10 @@ func (m *MockClient) GetDeviceJID() string {
 	return "6281234567890:1@s.whatsapp.net"
 }
 
+func (m *MockClient) GetDeviceLID() string {
+	return "109389310636200:1@lid"
+}
+
 func (m *MockClient) PairPhone(ctx context.Context, phone string, clientDisplayName string) (string, error) {
 	if m.pairErr != nil {
 		return "", m.pairErr

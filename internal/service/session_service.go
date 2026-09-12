@@ -323,3 +323,11 @@ func (s *SessionServiceImpl) requestPairingWithRetry(ctx context.Context, phone 
 
 	return domain.ErrPairingTimeout
 }
+
+func (s *SessionServiceImpl) GetDeviceJID() string {
+	return s.client.GetDeviceJID()
+}
+
+func (s *SessionServiceImpl) GetDeviceLID() string {
+	return s.client.GetDeviceLID()
+}

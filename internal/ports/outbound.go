@@ -14,6 +14,7 @@ type WhatsAppClientPort interface {
 	IsConnected() bool
 	IsLoggedIn() bool
 	GetDeviceJID() string
+	GetDeviceLID() string
 	PairPhone(ctx context.Context, phone string, clientDisplayName string) (string, error)
 	SendTextMessage(ctx context.Context, to string, text string, replyID string) (string, error)
 	SendMediaMessage(ctx context.Context, to string, media domain.MediaMessage) (string, error)

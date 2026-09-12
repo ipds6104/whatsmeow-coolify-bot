@@ -186,3 +186,69 @@ func TestEventHandler_QuotedMessageForwarding(t *testing.T) {
 	}
 }
 
+func TestEventHandler_LIDMentionDetection(t *testing.T) {
+	var mu sync.Mutex
+	var receivedPayloads []map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		receivedPayloads = append(receivedPayloads, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	mockCli := &MockClient{connected: true, loggedIn: true}
+	mockNotif := &MockNotifier{}
+	mockStore := &MockStore{}
+
+	sessionService := service.NewSessionService(mockCli, mockNotif, mockStore, "628982157341", "Chrome (Linux)")
+	evtHandler := waAdapter.NewEventHandler(sessionService, mockNotif, mockStore, server.URL, "primary_bot")
+
+	groupJID := types.NewJID("6289625345646-1572457826", types.GroupServer)
+	userJID := types.NewJID("87097809592405", "lid")
+
+	// Send message in group mentioning the bot's LID (109389310636200@lid)
+	evtHandler.HandleEvent(&events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     groupJID,
+				Sender:   userJID,
+				IsFromMe: false,
+				IsGroup:  true,
+			},
+			ID:        "GROUP_LID_MSG_001",
+			Timestamp: time.Now(),
+			PushName:  "Ihza",
+		},
+		Message: &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: proto.String("@109389310636200"),
+				ContextInfo: &waE2E.ContextInfo{
+					MentionedJID: []string{"109389310636200@lid"},
+				},
+			},
+		},
+	})
+
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedPayloads) != 1 {
+		t.Fatalf("expected 1 forwarded message, got %d", len(receivedPayloads))
+	}
+
+	payload := receivedPayloads[0]
+	if payload["is_bot_mentioned"] != true {
+		t.Errorf("expected is_bot_mentioned true, got %v", payload["is_bot_mentioned"])
+	}
+	if payload["bot_lid"] == nil || payload["bot_lid"] == "" {
+		t.Errorf("expected bot_lid in payload, got %v", payload["bot_lid"])
+	}
+}
+
