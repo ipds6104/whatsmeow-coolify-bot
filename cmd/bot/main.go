@@ -119,7 +119,7 @@ func main() {
 	)
 
 	// 5. Inbound Whatsmeow Event Handler
-	evtHandler := waAdapter.NewEventHandler(sessionService, notifier, pgStore)
+	evtHandler := waAdapter.NewEventHandler(sessionService, notifier, pgStore, cfg.WebhookURL, cfg.WebhookRole)
 	clientAdapter.AddEventHandler(evtHandler.HandleEvent)
 
 	// 6. Inbound REST API Server

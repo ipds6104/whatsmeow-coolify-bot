@@ -21,6 +21,8 @@ services:
       - WA_PHONE_NUMBER=${WA_PHONE_NUMBER}
       - WA_CLIENT_NAME=${WA_CLIENT_NAME:-Chrome (Coolify)}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - WEBHOOK_ROLE=${WEBHOOK_ROLE:-primary_bot}
       - API_KEY=${API_KEY}
       - ANTIBAN_PRESET=${ANTIBAN_PRESET:-moderate}
       - BACKUP_DIR=/app/backups

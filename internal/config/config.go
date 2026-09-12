@@ -14,6 +14,8 @@ type Config struct {
 	WAPhoneNumber     string
 	WAClientName      string
 	DiscordWebhookURL string
+	WebhookURL        string
+	WebhookRole       string
 	APIKey            string
 	AntibanPreset         string
 	BackupDir             string
@@ -51,6 +53,8 @@ func LoadConfig() *Config {
 		WAPhoneNumber:         cleanPhone(getEnv("WA_PHONE_NUMBER", "")),
 		WAClientName:          getEnv("WA_CLIENT_NAME", "Chrome (Linux)"),
 		DiscordWebhookURL:     getEnv("DISCORD_WEBHOOK_URL", ""),
+		WebhookURL:            getEnv("WEBHOOK_URL", getEnv("FORWARD_WEBHOOK_URL", "")),
+		WebhookRole:           getEnv("WEBHOOK_ROLE", "primary_bot"),
 		APIKey:                getEnv("API_KEY", ""),
 		AntibanPreset:         getEnv("ANTIBAN_PRESET", "moderate"),
 		BackupDir:             getEnv("BACKUP_DIR", "/app/backups"),

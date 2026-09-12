@@ -1,10 +1,14 @@
 package whatsmeow
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"time"
 
 	"go.mau.fi/whatsmeow/types/events"
 
@@ -17,17 +21,28 @@ type EventHandler struct {
 	sessionService *service.SessionServiceImpl
 	notifier       ports.NotifierPort
 	store          ports.SessionStorePort
+	webhookURL     string
+	webhookRole    string
+	httpClient     *http.Client
 }
 
 func NewEventHandler(
 	sessionService *service.SessionServiceImpl,
 	notifier ports.NotifierPort,
 	store ports.SessionStorePort,
+	webhookURL string,
+	webhookRole string,
 ) *EventHandler {
+	if webhookRole == "" {
+		webhookRole = "primary_bot"
+	}
 	return &EventHandler{
 		sessionService: sessionService,
 		notifier:       notifier,
 		store:          store,
+		webhookURL:     webhookURL,
+		webhookRole:    webhookRole,
+		httpClient:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -154,5 +169,60 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 
 	if err := h.store.SaveMessage(ctx, chatMsg); err != nil {
 		log.Printf("[EVENT_HANDLER] error saving message %s: %v", msgID, err)
+	}
+
+	if h.webhookURL != "" && !chatMsg.IsFromMe {
+		go h.forwardToWebhook(chatMsg)
+	}
+}
+
+func (h *EventHandler) forwardToWebhook(msg domain.ChatMessage) {
+	payload := map[string]interface{}{
+		"id":           msg.ID,
+		"message_id":   msg.ID,
+		"chat_jid":     msg.ChatJID,
+		"from":         msg.ChatJID,
+		"sender_jid":   msg.SenderJID,
+		"sender":       msg.SenderJID,
+		"sender_name":  msg.SenderName,
+		"push_name":    msg.SenderName,
+		"text":         msg.Text,
+		"body":         msg.Text,
+		"timestamp":    msg.Timestamp.Unix(),
+		"is_from_me":   msg.IsFromMe,
+		"media_type":   msg.MediaType,
+		"has_media":    msg.HasMedia,
+		"session_role": h.webhookRole,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[WEBHOOK] JSON serialization failed: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.webhookURL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[WEBHOOK] Failed constructing HTTP request to %s: %v", h.webhookURL, err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "whatsmeow-coolify-bot/1.0")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		log.Printf("[WEBHOOK] Failed forwarding message %s to %s: %v", msg.ID, h.webhookURL, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Printf("[WEBHOOK] Message %s from %s forwarded successfully to %s (status %d)", msg.ID, msg.SenderJID, h.webhookURL, resp.StatusCode)
+	} else {
+		log.Printf("[WEBHOOK] Forwarding message %s to %s returned non-2xx status: %d", msg.ID, h.webhookURL, resp.StatusCode)
 	}
 }
