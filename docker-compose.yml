@@ -38,15 +38,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.rule=Host(`${SERVICE_FQDN_WHATSAPP_BOT:-${COOLIFY_FQDN:-localhost}}`)"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.entrypoints=https,http"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.tls=true"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.service=${TRAEFIK_ROUTER_NAME:-wa-bot}"
-      - "traefik.http.services.${TRAEFIK_ROUTER_NAME:-wa-bot}.loadbalancer.server.port=8080"
     logging:
       driver: "json-file"
       options:
