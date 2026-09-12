@@ -99,3 +99,90 @@ func TestEventHandler_WebhookForwarding(t *testing.T) {
 		t.Errorf("expected session_role 'primary_bot', got %v", payload["session_role"])
 	}
 }
+
+func TestEventHandler_QuotedMessageForwarding(t *testing.T) {
+	var mu sync.Mutex
+	var receivedPayloads []map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		receivedPayloads = append(receivedPayloads, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	mockCli := &MockClient{connected: true, loggedIn: true}
+	mockNotif := &MockNotifier{}
+	mockStore := &MockStore{}
+
+	sessionService := service.NewSessionService(mockCli, mockNotif, mockStore, "628982157341", "Chrome (Linux)")
+	evtHandler := waAdapter.NewEventHandler(sessionService, mockNotif, mockStore, server.URL, "primary_bot")
+
+	userJID := types.NewJID("6289625345646", types.DefaultUserServer)
+
+	// Send message replying to an earlier message
+	evtHandler.HandleEvent(&events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     userJID,
+				Sender:   userJID,
+				IsFromMe: false,
+			},
+			ID:        "REPLY_MSG_001",
+			Timestamp: time.Now(),
+			PushName:  "Ihza",
+		},
+		Message: &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: proto.String("Ini balasan untuk chat sebelumnya!"),
+				ContextInfo: &waE2E.ContextInfo{
+					StanzaID:    proto.String("ORIGINAL_MSG_001"),
+					Participant: proto.String("628982157341@s.whatsapp.net"),
+					QuotedMessage: &waE2E.Message{
+						Conversation: proto.String("Daftar tool Aina yang tersedia: ..."),
+					},
+					MentionedJID: []string{"628982157341@s.whatsapp.net"},
+				},
+			},
+		},
+	})
+
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedPayloads) != 1 {
+		t.Fatalf("expected exactly 1 forwarded message, got %d", len(receivedPayloads))
+	}
+
+	payload := receivedPayloads[0]
+	if payload["id"] != "REPLY_MSG_001" {
+		t.Errorf("expected id REPLY_MSG_001, got %v", payload["id"])
+	}
+
+	quoted, ok := payload["quoted_message"].(map[string]interface{})
+	if !ok || quoted == nil {
+		t.Fatalf("expected quoted_message in payload, got %v", payload["quoted_message"])
+	}
+
+	if quoted["id"] != "ORIGINAL_MSG_001" {
+		t.Errorf("expected quoted id ORIGINAL_MSG_001, got %v", quoted["id"])
+	}
+	if quoted["text"] != "Daftar tool Aina yang tersedia: ..." {
+		t.Errorf("expected quoted text, got %v", quoted["text"])
+	}
+	if quoted["sender"] != "628982157341@s.whatsapp.net" {
+		t.Errorf("expected quoted sender 628982157341@s.whatsapp.net, got %v", quoted["sender"])
+	}
+
+	mentions, ok := payload["mentioned_jids"].([]interface{})
+	if !ok || len(mentions) != 1 || mentions[0] != "628982157341@s.whatsapp.net" {
+		t.Errorf("expected mentioned_jids to contain 628982157341@s.whatsapp.net, got %v", payload["mentioned_jids"])
+	}
+}
+

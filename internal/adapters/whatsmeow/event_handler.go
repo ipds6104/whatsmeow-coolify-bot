@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
@@ -184,13 +186,16 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 	var mediaType string
 	var hasMedia bool
 	var mediaInfo *domain.MediaDownloadInfo
+	var ctxInfo *waE2E.ContextInfo
 
 	if conv := evt.Message.GetConversation(); conv != "" {
 		text = conv
 	} else if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
 		text = ext.GetText()
+		ctxInfo = ext.GetContextInfo()
 	} else if img := evt.Message.GetImageMessage(); img != nil {
 		text = img.GetCaption()
+		ctxInfo = img.GetContextInfo()
 		mediaType = string(domain.MediaTypeImage)
 		hasMedia = true
 		mediaInfo = &domain.MediaDownloadInfo{
@@ -204,6 +209,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 		}
 	} else if vid := evt.Message.GetVideoMessage(); vid != nil {
 		text = vid.GetCaption()
+		ctxInfo = vid.GetContextInfo()
 		mediaType = string(domain.MediaTypeVideo)
 		hasMedia = true
 		mediaInfo = &domain.MediaDownloadInfo{
@@ -216,6 +222,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 			MediaType:   mediaType,
 		}
 	} else if aud := evt.Message.GetAudioMessage(); aud != nil {
+		ctxInfo = aud.GetContextInfo()
 		mediaType = string(domain.MediaTypeAudio)
 		hasMedia = true
 		mediaInfo = &domain.MediaDownloadInfo{
@@ -229,6 +236,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 		}
 	} else if doc := evt.Message.GetDocumentMessage(); doc != nil {
 		text = doc.GetCaption()
+		ctxInfo = doc.GetContextInfo()
 		mediaType = string(domain.MediaTypeDocument)
 		hasMedia = true
 		mediaInfo = &domain.MediaDownloadInfo{
@@ -240,9 +248,81 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 			MimeType:    doc.GetMimetype(),
 			MediaType:   mediaType,
 		}
+	} else if stk := evt.Message.GetStickerMessage(); stk != nil {
+		ctxInfo = stk.GetContextInfo()
+		mediaType = "sticker"
+		hasMedia = true
+	}
+
+	// Extract Quoted Message & Mention metadata from ContextInfo
+	var quotedPayload map[string]interface{}
+	var mentionedJIDs []string
+
+	if ctxInfo != nil {
+		mentionedJIDs = ctxInfo.GetMentionedJID()
+
+		stanzaID := ctxInfo.GetStanzaID()
+		participant := ctxInfo.GetParticipant()
+		if participant != "" {
+			if parsed, err := types.ParseJID(participant); err == nil {
+				participant = parsed.ToNonAD().String()
+			}
+		}
+
+		var quotedText string
+		if qMsg := ctxInfo.GetQuotedMessage(); qMsg != nil {
+			if qConv := qMsg.GetConversation(); qConv != "" {
+				quotedText = qConv
+			} else if qExt := qMsg.GetExtendedTextMessage(); qExt != nil {
+				quotedText = qExt.GetText()
+			} else if qImg := qMsg.GetImageMessage(); qImg != nil {
+				quotedText = qImg.GetCaption()
+				if quotedText == "" {
+					quotedText = "[Foto]"
+				}
+			} else if qVid := qMsg.GetVideoMessage(); qVid != nil {
+				quotedText = qVid.GetCaption()
+				if quotedText == "" {
+					quotedText = "[Video]"
+				}
+			} else if qDoc := qMsg.GetDocumentMessage(); qDoc != nil {
+				quotedText = qDoc.GetCaption()
+				if quotedText == "" {
+					quotedText = "[Dokumen]"
+				}
+			} else if qAud := qMsg.GetAudioMessage(); qAud != nil {
+				quotedText = "[Audio/Voice Note]"
+			} else if qStk := qMsg.GetStickerMessage(); qStk != nil {
+				quotedText = "[Stiker]"
+			}
+		}
+
+		if stanzaID != "" || quotedText != "" {
+			quotedPayload = map[string]interface{}{
+				"id":          stanzaID,
+				"message_id":  stanzaID,
+				"participant": participant,
+				"sender":      participant,
+				"sender_jid":  participant,
+				"text":        quotedText,
+				"body":        quotedText,
+			}
+			log.Printf("[EVENT_HANDLER] Quoted message detected: ID=%s Sender=%s Text=%q", stanzaID, participant, quotedText)
+		}
 	}
 
 	log.Printf("[EVENT_HANDLER] Incoming message ID=%s Chat=%s Sender=%s IsFromMe=%v Text=%q", msgID, chatJID, senderJID, isFromMe, text)
+
+	var rawData map[string]interface{}
+	if quotedPayload != nil || len(mentionedJIDs) > 0 {
+		rawData = make(map[string]interface{})
+		if quotedPayload != nil {
+			rawData["quoted_message"] = quotedPayload
+		}
+		if len(mentionedJIDs) > 0 {
+			rawData["mentioned_jids"] = mentionedJIDs
+		}
+	}
 
 	chatMsg := domain.ChatMessage{
 		ID:         msgID,
@@ -255,6 +335,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 		MediaType:  mediaType,
 		HasMedia:   hasMedia,
 		MediaInfo:  mediaInfo,
+		RawData:    rawData,
 	}
 
 	if err := h.store.SaveMessage(ctx, chatMsg); err != nil {
@@ -271,10 +352,15 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 		return
 	}
 
-	go h.forwardToWebhook(chatMsg, senderAlt)
+	go h.forwardToWebhook(chatMsg, senderAlt, quotedPayload, mentionedJIDs)
 }
 
-func (h *EventHandler) forwardToWebhook(msg domain.ChatMessage, senderAlt string) {
+func (h *EventHandler) forwardToWebhook(
+	msg domain.ChatMessage,
+	senderAlt string,
+	quotedPayload map[string]interface{},
+	mentionedJIDs []string,
+) {
 	start := time.Now()
 	payload := map[string]interface{}{
 		"id":           msg.ID,
@@ -297,6 +383,16 @@ func (h *EventHandler) forwardToWebhook(msg domain.ChatMessage, senderAlt string
 	if senderAlt != "" {
 		payload["sender_alt"] = senderAlt
 		payload["phone_number"] = senderAlt
+	}
+
+	if quotedPayload != nil {
+		payload["quoted_message"] = quotedPayload
+		payload["context_info"] = quotedPayload
+	}
+
+	if len(mentionedJIDs) > 0 {
+		payload["mentioned_jids"] = mentionedJIDs
+		payload["mentions"] = mentionedJIDs
 	}
 
 	body, err := json.Marshal(payload)
