@@ -153,6 +153,67 @@ func (s *Store) GetMessages(ctx context.Context, chatJID string, limit int) ([]d
 	return messages, nil
 }
 
+// GetAllMessages queries recent messages across all chats in descending order.
+func (s *Store) GetAllMessages(ctx context.Context, limit int) ([]domain.ChatMessage, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+
+	query := `
+	SELECT id, chat_jid, sender_jid, COALESCE(sender_name, ''), timestamp, is_from_me, COALESCE(text, ''), COALESCE(media_type, ''), has_media, media_info, raw_data
+	FROM chat_messages
+	ORDER BY timestamp DESC
+	LIMIT $1;
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all messages: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []domain.ChatMessage
+	for rows.Next() {
+		var msg domain.ChatMessage
+		var mediaJSON, rawJSON []byte
+
+		err := rows.Scan(
+			&msg.ID,
+			&msg.ChatJID,
+			&msg.SenderJID,
+			&msg.SenderName,
+			&msg.Timestamp,
+			&msg.IsFromMe,
+			&msg.Text,
+			&msg.MediaType,
+			&msg.HasMedia,
+			&mediaJSON,
+			&rawJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan message error: %w", err)
+		}
+
+		if len(mediaJSON) > 0 && string(mediaJSON) != "null" {
+			var info domain.MediaDownloadInfo
+			if err := json.Unmarshal(mediaJSON, &info); err == nil {
+				msg.MediaInfo = &info
+			}
+		}
+
+		if len(rawJSON) > 0 && string(rawJSON) != "null" {
+			var raw map[string]interface{}
+			if err := json.Unmarshal(rawJSON, &raw); err == nil {
+				msg.RawData = raw
+			}
+		}
+
+		messages = append(messages, msg)
+	}
+
+	return messages, nil
+}
+
 // HasSession checks if whatsmeow has an active registered device session in the database.
 func (s *Store) HasSession(ctx context.Context) (bool, error) {
 	var count int

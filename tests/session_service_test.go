@@ -113,6 +113,10 @@ func (m *MockStore) GetMessages(ctx context.Context, chatJID string, limit int) 
 	return m.messages, nil
 }
 
+func (m *MockStore) GetAllMessages(ctx context.Context, limit int) ([]domain.ChatMessage, error) {
+	return m.messages, nil
+}
+
 func (m *MockStore) HasSession(ctx context.Context) (bool, error) {
 	return true, nil
 }

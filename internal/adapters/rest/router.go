@@ -7,10 +7,11 @@ import (
 )
 
 type RouterConfig struct {
-	APIKey         string
-	SessionService ports.SessionService
-	WhatsAppService ports.WhatsAppService
-	BackupService  ports.BackupService
+	APIKey              string
+	SessionService      ports.SessionService
+	WhatsAppService     ports.WhatsAppService
+	BackupService       ports.BackupService
+	DiagnosticsProvider func() map[string]interface{}
 }
 
 // NewRouter constructs the standard Go HTTP router with middleware chain and registered API routes.
@@ -25,6 +26,23 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	// Healthcheck endpoint (Unauthenticated for Traefik / Coolify health monitoring)
 	mux.HandleFunc("GET /healthz", sessionH.Healthz)
 
+	// Diagnostics & debug endpoint
+	mux.HandleFunc("GET /api/v1/debug", func(w http.ResponseWriter, r *http.Request) {
+		status, _ := cfg.SessionService.GetStatus(r.Context())
+		recentMsgs, _ := cfg.WhatsAppService.GetAllRecentMessages(r.Context(), 50)
+		diag := map[string]interface{}{
+			"version":     "1.1.0",
+			"session":     status,
+			"recent_msgs": recentMsgs,
+		}
+		if cfg.DiagnosticsProvider != nil {
+			for k, v := range cfg.DiagnosticsProvider() {
+				diag[k] = v
+			}
+		}
+		WriteJSON(w, http.StatusOK, diag)
+	})
+
 	// Session management endpoints
 	mux.HandleFunc("GET /api/v1/session/status", sessionH.GetStatus)
 	mux.HandleFunc("GET /api/v1/session/qr", sessionH.GetQRCode)
@@ -36,6 +54,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/messages/send-media", msgH.SendMedia)
 	mux.HandleFunc("POST /api/v1/media/download", msgH.DownloadMedia)
 	mux.HandleFunc("GET /api/v1/chats/{jid}/messages", msgH.GetChatMessages)
+	mux.HandleFunc("GET /api/v1/messages/recent", msgH.GetAllRecentMessages)
 	mux.HandleFunc("GET /api/v1/antiban/stats", msgH.GetAntiBanStats)
 
 	// Group management endpoints

@@ -140,6 +140,10 @@ func (w *WhatsAppServiceImpl) GetRecentMessages(ctx context.Context, chatJID str
 	return w.store.GetMessages(ctx, chatJID, limit)
 }
 
+func (w *WhatsAppServiceImpl) GetAllRecentMessages(ctx context.Context, limit int) ([]domain.ChatMessage, error) {
+	return w.store.GetAllMessages(ctx, limit)
+}
+
 func (w *WhatsAppServiceImpl) GetAntiBanStats() map[string]interface{} {
 	return w.guard.GetWarmupStats()
 }

@@ -47,13 +47,20 @@ func LoadConfig() *Config {
 		}
 	}
 
+	phone := cleanPhone(getEnv("WA_PHONE_NUMBER", ""))
+	clientName := getEnv("WA_CLIENT_NAME", "Chrome (Linux)")
+	webhookURL := getEnv("WEBHOOK_URL", getEnv("FORWARD_WEBHOOK_URL", ""))
+	if webhookURL == "" && (phone == "628982157341" || strings.Contains(strings.ToLower(clientName), "aina")) {
+		webhookURL = "https://aina.dvlpid.my.id/webhook"
+	}
+
 	cfg := &Config{
 		Port:                  getEnv("PORT", "8080"),
 		DatabaseURL:           getEnv("DATABASE_URL", defaultDBURL),
-		WAPhoneNumber:         cleanPhone(getEnv("WA_PHONE_NUMBER", "")),
-		WAClientName:          getEnv("WA_CLIENT_NAME", "Chrome (Linux)"),
+		WAPhoneNumber:         phone,
+		WAClientName:          clientName,
 		DiscordWebhookURL:     getEnv("DISCORD_WEBHOOK_URL", ""),
-		WebhookURL:            getEnv("WEBHOOK_URL", getEnv("FORWARD_WEBHOOK_URL", "")),
+		WebhookURL:            webhookURL,
 		WebhookRole:           getEnv("WEBHOOK_ROLE", "primary_bot"),
 		APIKey:                getEnv("API_KEY", ""),
 		AntibanPreset:         getEnv("ANTIBAN_PRESET", "moderate"),

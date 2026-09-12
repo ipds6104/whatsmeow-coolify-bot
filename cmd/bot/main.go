@@ -124,10 +124,11 @@ func main() {
 
 	// 6. Inbound REST API Server
 	httpRouter := rest.NewRouter(rest.RouterConfig{
-		APIKey:          cfg.APIKey,
-		SessionService:  sessionService,
-		WhatsAppService: waService,
-		BackupService:   backupService,
+		APIKey:              cfg.APIKey,
+		SessionService:      sessionService,
+		WhatsAppService:     waService,
+		BackupService:       backupService,
+		DiagnosticsProvider: evtHandler.GetDiagnostics,
 	})
 
 	httpServer := &http.Server{

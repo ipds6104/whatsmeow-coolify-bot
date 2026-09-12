@@ -155,6 +155,24 @@ func (h *MessageHandler) GetChatMessages(w http.ResponseWriter, r *http.Request)
 	WriteJSON(w, http.StatusOK, messages)
 }
 
+// GetAllRecentMessages retrieves recent messages across all conversations.
+func (h *MessageHandler) GetAllRecentMessages(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	messages, err := h.waService.GetAllRecentMessages(r.Context(), limit)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, messages)
+}
+
 // GetAntiBanStats exposes live diagnostic metrics from the anti-ban guard.
 func (h *MessageHandler) GetAntiBanStats(w http.ResponseWriter, r *http.Request) {
 	stats := h.waService.GetAntiBanStats()
