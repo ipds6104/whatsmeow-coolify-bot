@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: whatsmeow-coolify-bot
+    container_name: ${CONTAINER_NAME:-whatsmeow-coolify-bot}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -41,11 +41,11 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
-      - "traefik.http.routers.wa-bot.rule=Host(`${SERVICE_FQDN_WHATSAPP_BOT:-${COOLIFY_FQDN:-localhost}}`)"
-      - "traefik.http.routers.wa-bot.entrypoints=https,http"
-      - "traefik.http.routers.wa-bot.tls=true"
-      - "traefik.http.routers.wa-bot.tls.certresolver=letsencrypt"
-      - "traefik.http.services.wa-bot.loadbalancer.server.port=8080"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.rule=Host(`${SERVICE_FQDN_WHATSAPP_BOT:-${COOLIFY_FQDN:-localhost}}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.entrypoints=https,http"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.tls=true"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-wa-bot}.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${TRAEFIK_ROUTER_NAME:-wa-bot}.loadbalancer.server.port=8080"
     logging:
       driver: "json-file"
       options:
@@ -57,7 +57,7 @@ services:
 
   wa-postgres:
     image: postgres:16.8-alpine
-    container_name: whatsmeow-postgres
+    container_name: ${POSTGRES_CONTAINER_NAME:-whatsmeow-postgres}
     restart: unless-stopped
     # Alokasi shared memory untuk queries & cache buffers
     shm_size: 512mb
@@ -90,9 +90,9 @@ services:
 
 volumes:
   wa_data:
-    name: wa_data
+    name: ${WA_DATA_VOLUME:-wa_data}
   wa_backups:
-    name: wa_backups
+    name: ${WA_BACKUPS_VOLUME:-wa_backups}
 
 networks:
   internal_net:
