@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"go.mau.fi/whatsmeow"
@@ -63,24 +64,61 @@ func (c *ClientAdapter) PairPhone(ctx context.Context, phone string, clientDispl
 	return c.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, clientDisplayName)
 }
 
-func (c *ClientAdapter) SendTextMessage(ctx context.Context, to string, text string, replyID string) (string, error) {
+var mentionRegex = regexp.MustCompile(`@(\d{8,16})`)
+
+func (c *ClientAdapter) SendTextMessage(ctx context.Context, to string, text string, replyID string, mentions []string) (string, error) {
 	targetJID, err := c.parseJID(to)
 	if err != nil {
 		return "", err
 	}
 
-	msg := &waE2E.Message{
-		Conversation: proto.String(text),
+	// Prepare mentioned JIDs
+	mentionedJIDs := make([]string, 0, len(mentions)+4)
+	existing := make(map[string]bool)
+
+	for _, m := range mentions {
+		m = strings.TrimSpace(m)
+		if m != "" && !existing[m] {
+			mentionedJIDs = append(mentionedJIDs, m)
+			existing[m] = true
+		}
 	}
 
-	if replyID != "" {
-		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
-			Text: proto.String(text),
-			ContextInfo: &waE2E.ContextInfo{
-				StanzaID: proto.String(replyID),
-			},
+	// Auto-detect @<digits> in text (e.g. @6289625345646 or @87097809592405)
+	matches := mentionRegex.FindAllStringSubmatch(text, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			num := match[1]
+			userJID := num + "@s.whatsapp.net"
+			if !existing[userJID] {
+				mentionedJIDs = append(mentionedJIDs, userJID)
+				existing[userJID] = true
+			}
+			lidJID := num + "@lid"
+			if !existing[lidJID] {
+				mentionedJIDs = append(mentionedJIDs, lidJID)
+				existing[lidJID] = true
+			}
 		}
-		msg.Conversation = nil
+	}
+
+	msg := &waE2E.Message{}
+
+	if replyID != "" || len(mentionedJIDs) > 0 {
+		ctxInfo := &waE2E.ContextInfo{}
+		if replyID != "" {
+			ctxInfo.StanzaID = proto.String(replyID)
+		}
+		if len(mentionedJIDs) > 0 {
+			ctxInfo.MentionedJID = mentionedJIDs
+		}
+
+		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
+			Text:        proto.String(text),
+			ContextInfo: ctxInfo,
+		}
+	} else {
+		msg.Conversation = proto.String(text)
 	}
 
 	resp, err := c.client.SendMessage(ctx, targetJID, msg)

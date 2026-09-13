@@ -16,9 +16,10 @@ const (
 
 // TextMessage represents a payload for sending text to a contact or group.
 type TextMessage struct {
-	Recipient string `json:"recipient"`          // Phone number (e.g. 6281234567890) or Group JID (xxx@g.us)
-	Content   string `json:"content"`            // Message body
-	ReplyToID string `json:"reply_to_id,omitempty"` // Optional message ID being quoted
+	Recipient     string   `json:"recipient"`              // Phone number (e.g. 6281234567890) or Group JID (xxx@g.us)
+	Content       string   `json:"content"`                // Message body
+	ReplyToID     string   `json:"reply_to_id,omitempty"`  // Optional message ID being quoted
+	MentionedJIDs []string `json:"mentioned_jids,omitempty"` // Optional WhatsApp JIDs/LIDs to tag/mention
 }
 
 // MediaMessage represents a payload for sending media files to WhatsApp.

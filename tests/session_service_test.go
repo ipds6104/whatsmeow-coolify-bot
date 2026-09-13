@@ -54,7 +54,7 @@ func (m *MockClient) PairPhone(ctx context.Context, phone string, clientDisplayN
 	return m.pairCode, nil
 }
 
-func (m *MockClient) SendTextMessage(ctx context.Context, to string, text string, replyID string) (string, error) {
+func (m *MockClient) SendTextMessage(ctx context.Context, to string, text string, replyID string, mentions []string) (string, error) {
 	m.sentMsgs = append(m.sentMsgs, text)
 	return "MSG_12345", nil
 }

@@ -48,7 +48,7 @@ func (w *WhatsAppServiceImpl) SendText(ctx context.Context, msg domain.TextMessa
 	}
 
 	// 2. Transmit via client
-	msgID, err := w.client.SendTextMessage(ctx, msg.Recipient, msg.Content, msg.ReplyToID)
+	msgID, err := w.client.SendTextMessage(ctx, msg.Recipient, msg.Content, msg.ReplyToID, msg.MentionedJIDs)
 	if err != nil {
 		return "", fmt.Errorf("failed to dispatch text message: %w", err)
 	}

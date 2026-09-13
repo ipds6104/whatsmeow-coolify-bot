@@ -111,6 +111,35 @@ func TestREST_SendTextMessage(t *testing.T) {
 	}
 }
 
+func TestREST_SendTextMessage_WithMentions(t *testing.T) {
+	router := setupTestRouter(t, "")
+
+	payload := domain.TextMessage{
+		Recipient:     "1203630123456789@g.us",
+		Content:       "Halo @6289625345646 dan @87097809592405!",
+		ReplyToID:     "ORIGINAL_123",
+		MentionedJIDs: []string{"6289625345646@s.whatsapp.net", "87097809592405@lid"},
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messages/send-text", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	var resp rest.APIResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if !resp.Success {
+		t.Errorf("expected success true, got false")
+	}
+}
+
 func TestREST_ListGroups(t *testing.T) {
 	router := setupTestRouter(t, "")
 
