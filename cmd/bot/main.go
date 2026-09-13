@@ -172,6 +172,7 @@ func main() {
 		log.Printf("HTTP server shutdown warning: %v", err)
 	}
 
+	evtHandler.Stop()
 	_ = sessionService.Disconnect(shutdownCtx)
 	log.Println("Graceful shutdown completed cleanly.")
 }

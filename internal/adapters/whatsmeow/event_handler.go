@@ -38,6 +38,18 @@ type EventTraceLog struct {
 	Summary   string    `json:"summary"`
 }
 
+type PendingWebhook struct {
+	ID         string    `json:"id"`
+	Payload    []byte    `json:"-"`
+	ChatJID    string    `json:"chat_jid"`
+	SenderJID  string    `json:"sender_jid"`
+	Text       string    `json:"text"`
+	EnqueuedAt time.Time `json:"enqueued_at"`
+	Attempts   int       `json:"attempts"`
+	NextRetry  time.Time `json:"next_retry"`
+	LastError  string    `json:"last_error"`
+}
+
 type EventHandler struct {
 	sessionService *service.SessionServiceImpl
 	notifier       ports.NotifierPort
@@ -49,6 +61,11 @@ type EventHandler struct {
 	mu               sync.RWMutex
 	recentDeliveries []WebhookDeliveryLog
 	recentEvents     []EventTraceLog
+
+	retryMu     sync.Mutex
+	retryQueue  []*PendingWebhook
+	retryNotify chan struct{}
+	stopRetry   chan struct{}
 }
 
 func NewEventHandler(
@@ -61,7 +78,7 @@ func NewEventHandler(
 	if webhookRole == "" {
 		webhookRole = "primary_bot"
 	}
-	return &EventHandler{
+	h := &EventHandler{
 		sessionService:   sessionService,
 		notifier:         notifier,
 		store:            store,
@@ -70,6 +87,20 @@ func NewEventHandler(
 		httpClient:       &http.Client{Timeout: 15 * time.Second},
 		recentDeliveries: make([]WebhookDeliveryLog, 0, 30),
 		recentEvents:     make([]EventTraceLog, 0, 30),
+		retryQueue:       make([]*PendingWebhook, 0, 100),
+		retryNotify:      make(chan struct{}, 1),
+		stopRetry:        make(chan struct{}),
+	}
+	go h.startRetryWorker()
+	return h
+}
+
+func (h *EventHandler) Stop() {
+	select {
+	case <-h.stopRetry:
+		// already closed
+	default:
+		close(h.stopRetry)
 	}
 }
 
@@ -97,19 +128,42 @@ func (h *EventHandler) recordDelivery(dl WebhookDeliveryLog) {
 
 func (h *EventHandler) GetDiagnostics() map[string]interface{} {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-
 	deliveriesCopy := make([]WebhookDeliveryLog, len(h.recentDeliveries))
 	copy(deliveriesCopy, h.recentDeliveries)
 
 	eventsCopy := make([]EventTraceLog, len(h.recentEvents))
 	copy(eventsCopy, h.recentEvents)
+	h.mu.RUnlock()
+
+	h.retryMu.Lock()
+	pendingCount := len(h.retryQueue)
+	var queueSummary []map[string]interface{}
+	limit := 10
+	if pendingCount < limit {
+		limit = pendingCount
+	}
+	for i := 0; i < limit; i++ {
+		item := h.retryQueue[i]
+		queueSummary = append(queueSummary, map[string]interface{}{
+			"id":          item.ID,
+			"chat_jid":    item.ChatJID,
+			"sender_jid":  item.SenderJID,
+			"text":        item.Text,
+			"enqueued_at": item.EnqueuedAt,
+			"attempts":    item.Attempts,
+			"next_retry":  item.NextRetry,
+			"last_error":  item.LastError,
+		})
+	}
+	h.retryMu.Unlock()
 
 	return map[string]interface{}{
-		"webhook_url":       h.webhookURL,
-		"webhook_role":      h.webhookRole,
-		"recent_deliveries": deliveriesCopy,
-		"recent_events":     eventsCopy,
+		"webhook_url":         h.webhookURL,
+		"webhook_role":        h.webhookRole,
+		"recent_deliveries":   deliveriesCopy,
+		"recent_events":       eventsCopy,
+		"pending_retry_count": pendingCount,
+		"pending_retry_queue": queueSummary,
 	}
 }
 
@@ -448,22 +502,69 @@ func (h *EventHandler) forwardToWebhook(
 		return
 	}
 
+	// Strict FIFO resilience: if there are already pending messages in the retry queue
+	// (meaning Aina is updating or offline), append directly to preserve sequence.
+	h.retryMu.Lock()
+	if len(h.retryQueue) > 0 {
+		h.enqueueRetryLocked(body, msg.ID, msg.ChatJID, msg.SenderJID, msg.Text, "prior items pending in retry queue")
+		h.retryMu.Unlock()
+		return
+	}
+	h.retryMu.Unlock()
+
+	// Direct fast-path delivery
+	success, errMsg := h.deliverWebhookPayload(body, msg.ID, msg.ChatJID, msg.SenderJID, msg.Text, false)
+	if !success {
+		// Delivery failed (e.g. Aina is down, restarting, or redeploying). Enqueue for durable background retry.
+		h.retryMu.Lock()
+		h.enqueueRetryLocked(body, msg.ID, msg.ChatJID, msg.SenderJID, msg.Text, errMsg)
+		h.retryMu.Unlock()
+	}
+}
+
+func (h *EventHandler) enqueueRetryLocked(body []byte, msgID, chatJID, senderJID, text, reason string) {
+	if len(h.retryQueue) >= 500 {
+		// Bounded memory queue: drop oldest message if capacity exceeded
+		h.retryQueue = h.retryQueue[1:]
+	}
+	item := &PendingWebhook{
+		ID:         msgID,
+		Payload:    body,
+		ChatJID:    chatJID,
+		SenderJID:  senderJID,
+		Text:       text,
+		EnqueuedAt: time.Now(),
+		Attempts:   1,
+		NextRetry:  time.Now().Add(2 * time.Second),
+		LastError:  reason,
+	}
+	h.retryQueue = append(h.retryQueue, item)
+	log.Printf("[WEBHOOK-RETRY] Enqueued message %s from %s for background retry (queue len: %d, reason: %s)", msgID, senderJID, len(h.retryQueue), reason)
+
+	select {
+	case h.retryNotify <- struct{}{}:
+	default:
+	}
+}
+
+func (h *EventHandler) deliverWebhookPayload(body []byte, msgID, chatJID, senderJID, text string, isRetry bool) (bool, string) {
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.webhookURL, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("[WEBHOOK] Failed constructing HTTP request to %s: %v", h.webhookURL, err)
+		errMsg := fmt.Sprintf("Failed constructing HTTP request: %v", err)
 		h.recordDelivery(WebhookDeliveryLog{
 			Timestamp:  time.Now(),
-			MessageID:  msg.ID,
-			ChatJID:    msg.ChatJID,
-			SenderJID:  msg.SenderJID,
-			Text:       msg.Text,
-			Error:      err.Error(),
+			MessageID:  msgID,
+			ChatJID:    chatJID,
+			SenderJID:  senderJID,
+			Text:       text,
+			Error:      errMsg,
 			DurationMs: time.Since(start).Milliseconds(),
 		})
-		return
+		return false, errMsg
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -473,33 +574,107 @@ func (h *EventHandler) forwardToWebhook(
 	durationMs := time.Since(start).Milliseconds()
 
 	if err != nil {
-		log.Printf("[WEBHOOK] Failed forwarding message %s to %s: %v (took %dms)", msg.ID, h.webhookURL, err, durationMs)
+		errMsg := fmt.Sprintf("Network error: %v", err)
+		log.Printf("[WEBHOOK] Delivery failed for message %s to %s: %v (took %dms)", msgID, h.webhookURL, err, durationMs)
 		h.recordDelivery(WebhookDeliveryLog{
 			Timestamp:  time.Now(),
-			MessageID:  msg.ID,
-			ChatJID:    msg.ChatJID,
-			SenderJID:  msg.SenderJID,
-			Text:       msg.Text,
-			Error:      err.Error(),
+			MessageID:  msgID,
+			ChatJID:    chatJID,
+			SenderJID:  senderJID,
+			Text:       text,
+			Error:      errMsg,
 			DurationMs: durationMs,
 		})
-		return
+		return false, errMsg
 	}
 	defer resp.Body.Close()
 
 	h.recordDelivery(WebhookDeliveryLog{
 		Timestamp:  time.Now(),
-		MessageID:  msg.ID,
-		ChatJID:    msg.ChatJID,
-		SenderJID:  msg.SenderJID,
-		Text:       msg.Text,
+		MessageID:  msgID,
+		ChatJID:    chatJID,
+		SenderJID:  senderJID,
+		Text:       text,
 		Status:     resp.StatusCode,
 		DurationMs: durationMs,
 	})
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Printf("[WEBHOOK] Message %s from %s forwarded successfully to %s (status %d, %dms)", msg.ID, msg.SenderJID, h.webhookURL, resp.StatusCode, durationMs)
-	} else {
-		log.Printf("[WEBHOOK] Forwarding message %s to %s returned non-2xx status: %d (%dms)", msg.ID, h.webhookURL, resp.StatusCode, durationMs)
+		prefix := "[WEBHOOK]"
+		if isRetry {
+			prefix = "[WEBHOOK-RETRY]"
+		}
+		log.Printf("%s Message %s from %s delivered successfully to %s (status %d, %dms)", prefix, msgID, senderJID, h.webhookURL, resp.StatusCode, durationMs)
+		return true, ""
+	}
+
+	errMsg := fmt.Sprintf("Non-2xx HTTP status %d", resp.StatusCode)
+	log.Printf("[WEBHOOK] Message %s to %s returned %s (%dms)", msgID, h.webhookURL, errMsg, durationMs)
+	return false, errMsg
+}
+
+func (h *EventHandler) startRetryWorker() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.stopRetry:
+			return
+		case <-h.retryNotify:
+		case <-ticker.C:
+		}
+
+		h.processRetryQueue()
+	}
+}
+
+func (h *EventHandler) processRetryQueue() {
+	for {
+		h.retryMu.Lock()
+		if len(h.retryQueue) == 0 {
+			h.retryMu.Unlock()
+			return
+		}
+
+		item := h.retryQueue[0]
+		now := time.Now()
+		if now.Before(item.NextRetry) {
+			h.retryMu.Unlock()
+			return
+		}
+		h.retryMu.Unlock()
+
+		// Attempt delivery
+		success, errMsg := h.deliverWebhookPayload(item.Payload, item.ID, item.ChatJID, item.SenderJID, item.Text, true)
+
+		h.retryMu.Lock()
+		if len(h.retryQueue) == 0 || h.retryQueue[0] != item {
+			h.retryMu.Unlock()
+			return
+		}
+
+		if success {
+			log.Printf("[WEBHOOK-RETRY] Successfully delivered pending message %s to %s (attempt %d)", item.ID, h.webhookURL, item.Attempts)
+			h.retryQueue = h.retryQueue[1:]
+			h.retryMu.Unlock()
+			continue
+		} else {
+			item.Attempts++
+			item.LastError = errMsg
+			if item.Attempts >= 30 {
+				log.Printf("[WEBHOOK-RETRY] Dropping message %s after 30 failed attempts: %s", item.ID, errMsg)
+				h.retryQueue = h.retryQueue[1:]
+			} else {
+				backoffSec := item.Attempts * 2
+				if backoffSec > 30 {
+					backoffSec = 30
+				}
+				item.NextRetry = time.Now().Add(time.Duration(backoffSec) * time.Second)
+				log.Printf("[WEBHOOK-RETRY] Message %s retry %d failed (%s), backing off %ds", item.ID, item.Attempts, errMsg, backoffSec)
+			}
+			h.retryMu.Unlock()
+			return
+		}
 	}
 }

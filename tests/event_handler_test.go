@@ -2,6 +2,7 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -249,6 +250,104 @@ func TestEventHandler_LIDMentionDetection(t *testing.T) {
 	}
 	if payload["bot_lid"] == nil || payload["bot_lid"] == "" {
 		t.Errorf("expected bot_lid in payload, got %v", payload["bot_lid"])
+	}
+}
+
+func TestEventHandler_RetryQueueDowntimeResilience(t *testing.T) {
+	var mu sync.Mutex
+	var receivedIDs []string
+	isServerHealthy := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if !isServerHealthy {
+			// Simulate Aina offline/restarting (502 Bad Gateway)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if id, ok := body["id"].(string); ok {
+			receivedIDs = append(receivedIDs, id)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	mockCli := &MockClient{connected: true, loggedIn: true}
+	mockNotif := &MockNotifier{}
+	mockStore := &MockStore{}
+
+	sessionService := service.NewSessionService(mockCli, mockNotif, mockStore, "628982157341", "Chrome (Linux)")
+	evtHandler := waAdapter.NewEventHandler(sessionService, mockNotif, mockStore, server.URL, "primary_bot")
+	defer evtHandler.Stop()
+
+	userJID := types.NewJID("6289625345646", types.DefaultUserServer)
+
+	// Send 3 messages while server is DOWN
+	for i := 1; i <= 3; i++ {
+		msgID := fmt.Sprintf("MSG_QUEUE_%03d", i)
+		evtHandler.HandleEvent(&events.Message{
+			Info: types.MessageInfo{
+				MessageSource: types.MessageSource{
+					Chat:     userJID,
+					Sender:   userJID,
+					IsFromMe: false,
+				},
+				ID:        msgID,
+				Timestamp: time.Now(),
+				PushName:  "Ihza",
+			},
+			Message: &waE2E.Message{
+				Conversation: proto.String(fmt.Sprintf("Pesan ke-%d", i)),
+			},
+		})
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Verify all 3 messages entered retry queue or failed first attempt
+	time.Sleep(200 * time.Millisecond)
+	diag := evtHandler.GetDiagnostics()
+	pendingCount, _ := diag["pending_retry_count"].(int)
+	if pendingCount == 0 {
+		t.Fatalf("expected messages to be in retry queue during downtime, got %d", pendingCount)
+	}
+
+	// Now recover the server (Aina comes back online)
+	mu.Lock()
+	isServerHealthy = true
+	mu.Unlock()
+
+	// Wait for retry worker to flush pending queue (runs every 2s)
+	// Poll until queue is drained or timeout after 6 seconds
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(receivedIDs)
+		mu.Unlock()
+		if count == 3 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedIDs) != 3 {
+		t.Fatalf("expected all 3 messages delivered after recovery, got %d: %v", len(receivedIDs), receivedIDs)
+	}
+
+	// Strict FIFO verification: order must be MSG_QUEUE_001, MSG_QUEUE_002, MSG_QUEUE_003
+	expectedOrder := []string{"MSG_QUEUE_001", "MSG_QUEUE_002", "MSG_QUEUE_003"}
+	for i, exp := range expectedOrder {
+		if receivedIDs[i] != exp {
+			t.Errorf("expected receivedIDs[%d] = %s, got %s", i, exp, receivedIDs[i])
+		}
 	}
 }
 
