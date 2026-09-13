@@ -22,6 +22,11 @@ type WhatsAppClientPort interface {
 	SendChatPresence(ctx context.Context, to string, state string) error
 	GetGroupInfo(ctx context.Context, groupJID string) (domain.GroupInfo, error)
 	GetJoinedGroups(ctx context.Context) ([]domain.GroupInfo, error)
+	GetProfilePicture(ctx context.Context, jid string, preview bool) (*domain.ProfilePictureResult, error)
+	SetProfilePicture(ctx context.Context, jid string, avatar []byte) (string, error)
+	SetStatusMessage(ctx context.Context, status string) error
+	SendStatusBroadcast(ctx context.Context, status domain.StatusBroadcastMessage) (string, error)
+	RevokeMessage(ctx context.Context, chatJID string, messageID string) error
 	AddEventHandler(handler func(evt interface{}))
 }
 

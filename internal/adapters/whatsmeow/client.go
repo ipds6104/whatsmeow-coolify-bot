@@ -321,6 +321,127 @@ func (c *ClientAdapter) SendChatPresence(ctx context.Context, to string, state s
 	return c.client.SendChatPresence(ctx, recipientJID, chatPresence, types.ChatPresenceMediaText)
 }
 
+func (c *ClientAdapter) GetProfilePicture(ctx context.Context, jidStr string, preview bool) (*domain.ProfilePictureResult, error) {
+	var target types.JID
+	jidStr = strings.TrimSpace(jidStr)
+	if jidStr == "" || strings.EqualFold(jidStr, "me") || strings.EqualFold(jidStr, "self") {
+		if c.client.Store == nil || c.client.Store.ID == nil {
+			return nil, fmt.Errorf("client is not logged in")
+		}
+		target = c.client.Store.ID.ToNonAD()
+	} else {
+		var err error
+		target, err = c.parseJID(jidStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid target JID %q: %w", jidStr, err)
+		}
+	}
+
+	params := &whatsmeow.GetProfilePictureParams{
+		Preview: preview,
+	}
+	info, err := c.client.GetProfilePictureInfo(ctx, target, params)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil {
+		return nil, fmt.Errorf("profile picture not found or unchanged")
+	}
+
+	return &domain.ProfilePictureResult{
+		JID:  target.String(),
+		URL:  info.URL,
+		ID:   info.ID,
+		Type: info.Type,
+	}, nil
+}
+
+func (c *ClientAdapter) SetProfilePicture(ctx context.Context, jidStr string, avatar []byte) (string, error) {
+	var target types.JID
+	jidStr = strings.TrimSpace(jidStr)
+	if jidStr == "" || strings.EqualFold(jidStr, "me") || strings.EqualFold(jidStr, "self") {
+		if c.client.Store == nil || c.client.Store.ID == nil {
+			return "", fmt.Errorf("client is not logged in")
+		}
+		target = c.client.Store.ID.ToNonAD()
+	} else {
+		var err error
+		target, err = c.parseJID(jidStr)
+		if err != nil {
+			return "", fmt.Errorf("invalid target JID %q: %w", jidStr, err)
+		}
+	}
+
+	return c.client.SetGroupPhoto(ctx, target, avatar)
+}
+
+func (c *ClientAdapter) SetStatusMessage(ctx context.Context, status string) error {
+	return c.client.SetStatusMessage(ctx, types.SetStatusInput{
+		Text: &status,
+	})
+}
+
+func (c *ClientAdapter) SendStatusBroadcast(ctx context.Context, status domain.StatusBroadcastMessage) (string, error) {
+	if status.Type == domain.MediaTypeImage || status.Type == domain.MediaTypeVideo {
+		mediaMsg := domain.MediaMessage{
+			Recipient: types.StatusBroadcastJID.String(),
+			Type:      status.Type,
+			FileName:  status.FileName,
+			MimeType:  status.MimeType,
+			Caption:   status.Caption,
+			Data:      status.Data,
+			DataB64:   status.DataB64,
+		}
+		return c.SendMediaMessage(ctx, types.StatusBroadcastJID.String(), mediaMsg)
+	}
+
+	text := status.Text
+	if text == "" {
+		text = status.Caption
+	}
+	if text == "" {
+		return "", fmt.Errorf("text is required for text status broadcast")
+	}
+
+	extText := &waE2E.ExtendedTextMessage{
+		Text: proto.String(text),
+	}
+	if status.BackgroundColor != 0 {
+		extText.BackgroundArgb = proto.Uint32(status.BackgroundColor)
+	}
+	if status.Font != 0 {
+		extText.Font = waE2E.ExtendedTextMessage_FontType(status.Font).Enum()
+	}
+
+	waMsg := &waE2E.Message{
+		ExtendedTextMessage: extText,
+	}
+
+	resp, err := c.client.SendMessage(ctx, types.StatusBroadcastJID, waMsg)
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+func (c *ClientAdapter) RevokeMessage(ctx context.Context, chatJID string, messageID string) error {
+	var chat types.JID
+	chatJID = strings.TrimSpace(chatJID)
+	if chatJID == "" || strings.EqualFold(chatJID, "status") || strings.EqualFold(chatJID, "status@broadcast") {
+		chat = types.StatusBroadcastJID
+	} else {
+		var err error
+		chat, err = c.parseJID(chatJID)
+		if err != nil {
+			return fmt.Errorf("invalid chat JID %q: %w", chatJID, err)
+		}
+	}
+
+	revokeMsg := c.client.BuildRevoke(chat, types.EmptyJID, types.MessageID(messageID))
+	_, err := c.client.SendMessage(ctx, chat, revokeMsg)
+	return err
+}
+
 func (c *ClientAdapter) parseJID(input string) (types.JID, error) {
 	input = strings.TrimSpace(input)
 	if strings.Contains(input, "@") {

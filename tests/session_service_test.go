@@ -84,6 +84,29 @@ func (m *MockClient) GetJoinedGroups(ctx context.Context) ([]domain.GroupInfo, e
 	}, nil
 }
 
+func (m *MockClient) GetProfilePicture(ctx context.Context, jid string, preview bool) (*domain.ProfilePictureResult, error) {
+	return &domain.ProfilePictureResult{
+		JID: jid,
+		URL: "https://example.com/mock-avatar.jpg",
+	}, nil
+}
+
+func (m *MockClient) SetProfilePicture(ctx context.Context, jid string, avatar []byte) (string, error) {
+	return "mock_pic_id_123", nil
+}
+
+func (m *MockClient) SetStatusMessage(ctx context.Context, status string) error {
+	return nil
+}
+
+func (m *MockClient) SendStatusBroadcast(ctx context.Context, status domain.StatusBroadcastMessage) (string, error) {
+	return "mock_status_broadcast_id", nil
+}
+
+func (m *MockClient) RevokeMessage(ctx context.Context, chatJID string, messageID string) error {
+	return nil
+}
+
 func (m *MockClient) AddEventHandler(handler func(evt interface{})) {}
 
 // MockNotifier implements ports.NotifierPort

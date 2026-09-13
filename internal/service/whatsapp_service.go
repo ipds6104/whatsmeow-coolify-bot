@@ -154,3 +154,57 @@ func (w *WhatsAppServiceImpl) SendChatPresence(ctx context.Context, to string, s
 func (w *WhatsAppServiceImpl) GetAntiBanStats() map[string]interface{} {
 	return w.guard.GetWarmupStats()
 }
+
+func (w *WhatsAppServiceImpl) GetProfilePicture(ctx context.Context, jid string, preview bool) (*domain.ProfilePictureResult, error) {
+	if !w.client.IsConnected() {
+		return nil, domain.ErrNotConnected
+	}
+	if !w.client.IsLoggedIn() {
+		return nil, domain.ErrNotLoggedIn
+	}
+	return w.client.GetProfilePicture(ctx, jid, preview)
+}
+
+func (w *WhatsAppServiceImpl) SetProfilePicture(ctx context.Context, jid string, avatar []byte) (string, error) {
+	if !w.client.IsConnected() {
+		return "", domain.ErrNotConnected
+	}
+	if !w.client.IsLoggedIn() {
+		return "", domain.ErrNotLoggedIn
+	}
+	return w.client.SetProfilePicture(ctx, jid, avatar)
+}
+
+func (w *WhatsAppServiceImpl) SetStatusMessage(ctx context.Context, status string) error {
+	if !w.client.IsConnected() {
+		return domain.ErrNotConnected
+	}
+	if !w.client.IsLoggedIn() {
+		return domain.ErrNotLoggedIn
+	}
+	return w.client.SetStatusMessage(ctx, status)
+}
+
+func (w *WhatsAppServiceImpl) SendStatusBroadcast(ctx context.Context, status domain.StatusBroadcastMessage) (string, error) {
+	if !w.client.IsConnected() {
+		return "", domain.ErrNotConnected
+	}
+	if !w.client.IsLoggedIn() {
+		return "", domain.ErrNotLoggedIn
+	}
+	return w.client.SendStatusBroadcast(ctx, status)
+}
+
+func (w *WhatsAppServiceImpl) RevokeMessage(ctx context.Context, chatJID string, messageID string) error {
+	if !w.client.IsConnected() {
+		return domain.ErrNotConnected
+	}
+	if !w.client.IsLoggedIn() {
+		return domain.ErrNotLoggedIn
+	}
+	if messageID == "" {
+		return fmt.Errorf("message_id is required for revocation")
+	}
+	return w.client.RevokeMessage(ctx, chatJID, messageID)
+}
+

@@ -22,6 +22,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	msgH := NewMessageHandler(cfg.WhatsAppService)
 	groupH := NewGroupHandler(cfg.WhatsAppService)
 	backupH := NewBackupHandler(cfg.BackupService)
+	profileH := NewProfileHandler(cfg.WhatsAppService)
 
 	// Healthcheck endpoint (Unauthenticated for Traefik / Coolify health monitoring)
 	mux.HandleFunc("GET /healthz", sessionH.Healthz)
@@ -68,6 +69,20 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/backups", backupH.CreateBackup)
 	mux.HandleFunc("GET /api/v1/backups", backupH.ListBackups)
 	mux.HandleFunc("GET /api/v1/backups/{id}", backupH.DownloadBackup)
+
+	// User Profile Picture & About endpoints
+	mux.HandleFunc("GET /api/v1/user/profile-picture", profileH.GetProfilePicture)
+	mux.HandleFunc("POST /api/v1/user/profile-picture", profileH.SetProfilePicture)
+	mux.HandleFunc("DELETE /api/v1/user/profile-picture", profileH.RemoveProfilePicture)
+	mux.HandleFunc("POST /api/v1/user/about", profileH.SetAboutStatus)
+
+	// WhatsApp Status Broadcast (Stories) & Revocation endpoints
+	mux.HandleFunc("POST /api/v1/status/send-story", profileH.SendStatusStory)
+	mux.HandleFunc("POST /api/v1/status/send-text", profileH.SendStatusStory)
+	mux.HandleFunc("POST /api/v1/status/send-media", profileH.SendStatusStory)
+	mux.HandleFunc("POST /api/v1/status/revoke", profileH.RevokeStatusOrMessage)
+	mux.HandleFunc("DELETE /api/v1/status/{id}", profileH.RevokeStatusOrMessage)
+	mux.HandleFunc("POST /api/v1/messages/revoke", profileH.RevokeStatusOrMessage)
 
 	// Wrap middleware chain: Recovery -> Logger -> CORS -> Auth
 	handler := CORSMiddleware(mux)

@@ -28,6 +28,11 @@ type WhatsAppService interface {
 	SendChatPresence(ctx context.Context, to string, state string) error
 	GetRecentMessages(ctx context.Context, chatJID string, limit int) ([]domain.ChatMessage, error)
 	GetAllRecentMessages(ctx context.Context, limit int) ([]domain.ChatMessage, error)
+	GetProfilePicture(ctx context.Context, jid string, preview bool) (*domain.ProfilePictureResult, error)
+	SetProfilePicture(ctx context.Context, jid string, avatar []byte) (string, error)
+	SetStatusMessage(ctx context.Context, status string) error
+	SendStatusBroadcast(ctx context.Context, status domain.StatusBroadcastMessage) (string, error)
+	RevokeMessage(ctx context.Context, chatJID string, messageID string) error
 	GetAntiBanStats() map[string]interface{}
 }
 
