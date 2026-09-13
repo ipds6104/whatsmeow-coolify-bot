@@ -77,6 +77,8 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/user/about", profileH.SetAboutStatus)
 
 	// WhatsApp Status Broadcast (Stories) & Revocation endpoints
+	mux.HandleFunc("GET /api/v1/status/list", profileH.ListStatusStories)
+	mux.HandleFunc("GET /api/v1/status", profileH.ListStatusStories)
 	mux.HandleFunc("POST /api/v1/status/send-story", profileH.SendStatusStory)
 	mux.HandleFunc("POST /api/v1/status/send-text", profileH.SendStatusStory)
 	mux.HandleFunc("POST /api/v1/status/send-media", profileH.SendStatusStory)

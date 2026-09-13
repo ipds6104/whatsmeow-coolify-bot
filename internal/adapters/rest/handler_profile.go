@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/ports"
@@ -298,5 +299,81 @@ func (h *ProfileHandler) RevokeStatusOrMessage(w http.ResponseWriter, r *http.Re
 		"message_id": messageID,
 		"chat_jid":   chatJID,
 		"message":    "Message or status revoked successfully",
+	})
+}
+
+// ListStatusStories lists posted status stories (from self or contacts).
+// Query params:
+// - limit: int (default 50)
+// - self: bool (default true) - if true, only list statuses posted by this bot
+// - active_only: bool (default false) - if true, only list statuses < 24h old
+func (h *ProfileHandler) ListStatusStories(w http.ResponseWriter, r *http.Request) {
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	selfOnly := true
+	if selfStr := r.URL.Query().Get("self"); selfStr != "" {
+		if parsed, err := strconv.ParseBool(selfStr); err == nil {
+			selfOnly = parsed
+		}
+	}
+
+	activeOnly := false
+	if actStr := r.URL.Query().Get("active_only"); actStr != "" {
+		if parsed, err := strconv.ParseBool(actStr); err == nil {
+			activeOnly = parsed
+		}
+	}
+
+	messages, err := h.waService.GetRecentMessages(r.Context(), "status@broadcast", limit*2)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "failed to get status stories: "+err.Error())
+		return
+	}
+
+	now := time.Now()
+	var stories []map[string]interface{}
+	for _, m := range messages {
+		if selfOnly && !m.IsFromMe {
+			continue
+		}
+		age := now.Sub(m.Timestamp)
+		isExpired := age > 24*time.Hour
+		if activeOnly && isExpired {
+			continue
+		}
+
+		expiresInSec := int64((24*time.Hour - age) / time.Second)
+		if expiresInSec < 0 {
+			expiresInSec = 0
+		}
+
+		stories = append(stories, map[string]interface{}{
+			"id":                 m.ID,
+			"sender_jid":         m.SenderJID,
+			"sender_name":        m.SenderName,
+			"timestamp":          m.Timestamp.Format(time.RFC3339),
+			"is_from_me":         m.IsFromMe,
+			"text":               m.Text,
+			"media_type":         m.MediaType,
+			"has_media":          m.HasMedia,
+			"is_expired":         isExpired,
+			"age_hours":          fmt.Sprintf("%.1f", age.Hours()),
+			"expires_in_seconds": expiresInSec,
+		})
+		if len(stories) >= limit {
+			break
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"count":   len(stories),
+		"stories": stories,
 	})
 }

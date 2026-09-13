@@ -192,7 +192,27 @@ func (w *WhatsAppServiceImpl) SendStatusBroadcast(ctx context.Context, status do
 	if !w.client.IsLoggedIn() {
 		return "", domain.ErrNotLoggedIn
 	}
-	return w.client.SendStatusBroadcast(ctx, status)
+	msgID, err := w.client.SendStatusBroadcast(ctx, status)
+	if err != nil {
+		return "", err
+	}
+
+	text := status.Text
+	if text == "" {
+		text = status.Caption
+	}
+	_ = w.store.SaveMessage(ctx, domain.ChatMessage{
+		ID:        msgID,
+		ChatJID:   "status@broadcast",
+		SenderJID: w.client.GetDeviceJID(),
+		Timestamp: time.Now(),
+		IsFromMe:  true,
+		Text:      text,
+		MediaType: string(status.Type),
+		HasMedia:  status.Type == domain.MediaTypeImage || status.Type == domain.MediaTypeVideo,
+	})
+
+	return msgID, nil
 }
 
 func (w *WhatsAppServiceImpl) RevokeMessage(ctx context.Context, chatJID string, messageID string) error {
