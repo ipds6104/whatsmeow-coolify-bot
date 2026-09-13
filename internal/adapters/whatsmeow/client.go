@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -152,6 +153,17 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 		return "", fmt.Errorf("failed to upload media: %w", err)
 	}
 
+	if media.MimeType == "" {
+		media.MimeType = http.DetectContentType(media.Data)
+	}
+
+	var ctxInfo *waE2E.ContextInfo
+	if media.ReplyToID != "" {
+		ctxInfo = &waE2E.ContextInfo{
+			StanzaID: proto.String(media.ReplyToID),
+		}
+	}
+
 	msg := &waE2E.Message{}
 	switch media.Type {
 	case domain.MediaTypeImage:
@@ -164,6 +176,7 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uploaded.FileLength),
 			Caption:       proto.String(media.Caption),
+			ContextInfo:   ctxInfo,
 		}
 	case domain.MediaTypeVideo:
 		msg.VideoMessage = &waE2E.VideoMessage{
@@ -175,6 +188,7 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uploaded.FileLength),
 			Caption:       proto.String(media.Caption),
+			ContextInfo:   ctxInfo,
 		}
 	case domain.MediaTypeAudio, domain.MediaTypeVoice:
 		isPTT := media.Type == domain.MediaTypeVoice
@@ -187,6 +201,7 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uploaded.FileLength),
 			PTT:           proto.Bool(isPTT),
+			ContextInfo:   ctxInfo,
 		}
 	default:
 		fileName := media.FileName
@@ -204,6 +219,7 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 			Title:         proto.String(fileName),
 			FileName:      proto.String(fileName),
 			Caption:       proto.String(media.Caption),
+			ContextInfo:   ctxInfo,
 		}
 	}
 
