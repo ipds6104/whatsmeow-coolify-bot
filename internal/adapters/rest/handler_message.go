@@ -178,3 +178,52 @@ func (h *MessageHandler) GetAntiBanStats(w http.ResponseWriter, r *http.Request)
 	stats := h.waService.GetAntiBanStats()
 	WriteJSON(w, http.StatusOK, stats)
 }
+
+// PresenceRequest models incoming typing presence update requests.
+type PresenceRequest struct {
+	Recipient string `json:"recipient"`
+	To        string `json:"to"`
+	Receiver  string `json:"receiver"`
+	Presence  string `json:"presence"`
+	State     string `json:"state"`
+}
+
+// SendPresence handles typing indicators (composing / paused) for specific chats.
+func (h *MessageHandler) SendPresence(w http.ResponseWriter, r *http.Request) {
+	var req PresenceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	target := req.Recipient
+	if target == "" {
+		target = req.To
+	}
+	if target == "" {
+		target = req.Receiver
+	}
+	if target == "" {
+		WriteError(w, http.StatusBadRequest, "recipient is required")
+		return
+	}
+
+	presenceState := req.Presence
+	if presenceState == "" {
+		presenceState = req.State
+	}
+	if presenceState == "" {
+		presenceState = "composing"
+	}
+
+	if err := h.waService.SendChatPresence(r.Context(), target, presenceState); err != nil {
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"recipient": target,
+		"presence":  presenceState,
+		"status":    "ok",
+	})
+}

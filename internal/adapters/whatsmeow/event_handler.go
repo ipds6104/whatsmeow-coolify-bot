@@ -3,6 +3,7 @@ package whatsmeow
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -417,6 +418,25 @@ func (h *EventHandler) forwardToWebhook(
 	mentionedJIDs []string,
 ) {
 	start := time.Now()
+
+	var mediaBase64 string
+	if msg.HasMedia && msg.MediaInfo != nil && h.sessionService != nil {
+		downloadCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		data, err := h.sessionService.DownloadMedia(downloadCtx, *msg.MediaInfo)
+		cancel()
+		if err != nil {
+			log.Printf("[EVENT_HANDLER] Failed downloading media for %s: %v", msg.ID, err)
+		} else {
+			mediaBase64 = base64.StdEncoding.EncodeToString(data)
+			log.Printf("[EVENT_HANDLER] Successfully downloaded media for %s (%d bytes)", msg.ID, len(data))
+		}
+	}
+
+	effectiveText := msg.Text
+	if strings.TrimSpace(effectiveText) == "" && msg.HasMedia {
+		effectiveText = "[Foto terlampir]"
+	}
+
 	payload := map[string]interface{}{
 		"id":           msg.ID,
 		"message_id":   msg.ID,
@@ -426,13 +446,20 @@ func (h *EventHandler) forwardToWebhook(
 		"sender":       msg.SenderJID,
 		"sender_name":  msg.SenderName,
 		"push_name":    msg.SenderName,
-		"text":         msg.Text,
-		"body":         msg.Text,
+		"text":         effectiveText,
+		"body":         effectiveText,
 		"timestamp":    msg.Timestamp.Unix(),
 		"is_from_me":   msg.IsFromMe,
 		"media_type":   msg.MediaType,
 		"has_media":    msg.HasMedia,
 		"session_role": h.webhookRole,
+	}
+
+	if mediaBase64 != "" {
+		payload["media_base64"] = mediaBase64
+		if msg.MediaInfo != nil {
+			payload["mime_type"] = msg.MediaInfo.MimeType
+		}
 	}
 
 	if senderAlt != "" {

@@ -67,6 +67,10 @@ func (m *MockClient) DownloadMedia(ctx context.Context, info domain.MediaDownloa
 	return []byte("fake_media_data"), nil
 }
 
+func (m *MockClient) SendChatPresence(ctx context.Context, to string, state string) error {
+	return nil
+}
+
 func (m *MockClient) GetGroupInfo(ctx context.Context, groupJID string) (domain.GroupInfo, error) {
 	return domain.GroupInfo{
 		JID:  groupJID,

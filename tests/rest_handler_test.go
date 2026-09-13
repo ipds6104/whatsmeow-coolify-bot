@@ -215,3 +215,54 @@ func TestREST_GetAntiBanStats(t *testing.T) {
 		t.Errorf("expected preset relaxed, got %v", data["preset"])
 	}
 }
+
+func TestREST_SendPresence(t *testing.T) {
+	router := setupTestRouter(t, "secret-key-123")
+
+	payload := map[string]interface{}{
+		"recipient": "6289625345646@s.whatsapp.net",
+		"presence":  "composing",
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/presence", bytes.NewReader(body))
+	req.Header.Set("X-API-Key", "secret-key-123")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to parse json response: %v", err)
+	}
+
+	data, ok := resp["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected data field in response")
+	}
+
+	if data["presence"] != "composing" {
+		t.Errorf("expected presence composing, got %v", data["presence"])
+	}
+
+	// Also test fallback endpoint /api/v1/presence with 'state' and 'to'
+	payload2 := map[string]interface{}{
+		"to":    "1203630123456789@g.us",
+		"state": "paused",
+	}
+	body2, _ := json.Marshal(payload2)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/presence", bytes.NewReader(body2))
+	req2.Header.Set("X-API-Key", "secret-key-123")
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected status 200 on fallback endpoint, got %d (body: %s)", w2.Code, w2.Body.String())
+	}
+}

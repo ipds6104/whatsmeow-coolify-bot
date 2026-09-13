@@ -331,3 +331,10 @@ func (s *SessionServiceImpl) GetDeviceJID() string {
 func (s *SessionServiceImpl) GetDeviceLID() string {
 	return s.client.GetDeviceLID()
 }
+
+func (s *SessionServiceImpl) DownloadMedia(ctx context.Context, info domain.MediaDownloadInfo) ([]byte, error) {
+	if s.client == nil {
+		return nil, domain.ErrNotConnected
+	}
+	return s.client.DownloadMedia(ctx, info)
+}

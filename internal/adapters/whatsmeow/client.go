@@ -286,6 +286,25 @@ func (c *ClientAdapter) AddEventHandler(handler func(evt interface{})) {
 	c.client.AddEventHandler(handler)
 }
 
+func (c *ClientAdapter) SendChatPresence(ctx context.Context, to string, state string) error {
+	recipientJID, err := c.parseJID(to)
+	if err != nil {
+		return fmt.Errorf("invalid recipient JID %q: %w", to, err)
+	}
+
+	var chatPresence types.ChatPresence
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "composing", "typing":
+		chatPresence = types.ChatPresenceComposing
+	case "paused", "stop", "stopped":
+		chatPresence = types.ChatPresencePaused
+	default:
+		chatPresence = types.ChatPresenceComposing
+	}
+
+	return c.client.SendChatPresence(ctx, recipientJID, chatPresence, types.ChatPresenceMediaText)
+}
+
 func (c *ClientAdapter) parseJID(input string) (types.JID, error) {
 	input = strings.TrimSpace(input)
 	if strings.Contains(input, "@") {

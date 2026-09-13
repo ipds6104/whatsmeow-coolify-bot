@@ -19,6 +19,7 @@ type WhatsAppClientPort interface {
 	SendTextMessage(ctx context.Context, to string, text string, replyID string, mentions []string) (string, error)
 	SendMediaMessage(ctx context.Context, to string, media domain.MediaMessage) (string, error)
 	DownloadMedia(ctx context.Context, info domain.MediaDownloadInfo) ([]byte, error)
+	SendChatPresence(ctx context.Context, to string, state string) error
 	GetGroupInfo(ctx context.Context, groupJID string) (domain.GroupInfo, error)
 	GetJoinedGroups(ctx context.Context) ([]domain.GroupInfo, error)
 	AddEventHandler(handler func(evt interface{}))

@@ -144,6 +144,13 @@ func (w *WhatsAppServiceImpl) GetAllRecentMessages(ctx context.Context, limit in
 	return w.store.GetAllMessages(ctx, limit)
 }
 
+func (w *WhatsAppServiceImpl) SendChatPresence(ctx context.Context, to string, state string) error {
+	if !w.client.IsConnected() || !w.client.IsLoggedIn() {
+		return nil
+	}
+	return w.client.SendChatPresence(ctx, to, state)
+}
+
 func (w *WhatsAppServiceImpl) GetAntiBanStats() map[string]interface{} {
 	return w.guard.GetWarmupStats()
 }
