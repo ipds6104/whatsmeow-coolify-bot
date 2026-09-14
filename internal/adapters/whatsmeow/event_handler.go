@@ -63,10 +63,11 @@ type EventHandler struct {
 	recentDeliveries []WebhookDeliveryLog
 	recentEvents     []EventTraceLog
 
-	retryMu     sync.Mutex
-	retryQueue  []*PendingWebhook
-	retryNotify chan struct{}
-	stopRetry   chan struct{}
+	retryMu         sync.Mutex
+	retryQueue      []*PendingWebhook
+	deadLetterQueue []*PendingWebhook
+	retryNotify     chan struct{}
+	stopRetry       chan struct{}
 }
 
 func NewEventHandler(
@@ -89,6 +90,7 @@ func NewEventHandler(
 		recentDeliveries: make([]WebhookDeliveryLog, 0, 30),
 		recentEvents:     make([]EventTraceLog, 0, 30),
 		retryQueue:       make([]*PendingWebhook, 0, 100),
+		deadLetterQueue:  make([]*PendingWebhook, 0, 50),
 		retryNotify:      make(chan struct{}, 1),
 		stopRetry:        make(chan struct{}),
 	}
@@ -156,15 +158,36 @@ func (h *EventHandler) GetDiagnostics() map[string]interface{} {
 			"last_error":  item.LastError,
 		})
 	}
+
+	dlqCount := len(h.deadLetterQueue)
+	var dlqSummary []map[string]interface{}
+	dlqLimit := 10
+	if dlqCount < dlqLimit {
+		dlqLimit = dlqCount
+	}
+	for i := 0; i < dlqLimit; i++ {
+		item := h.deadLetterQueue[i]
+		dlqSummary = append(dlqSummary, map[string]interface{}{
+			"id":          item.ID,
+			"chat_jid":    item.ChatJID,
+			"sender_jid":  item.SenderJID,
+			"text":        item.Text,
+			"enqueued_at": item.EnqueuedAt,
+			"attempts":    item.Attempts,
+			"last_error":  item.LastError,
+		})
+	}
 	h.retryMu.Unlock()
 
 	return map[string]interface{}{
 		"webhook_url":         h.webhookURL,
 		"webhook_role":        h.webhookRole,
-		"recent_deliveries":   deliveriesCopy,
-		"recent_events":       eventsCopy,
 		"pending_retry_count": pendingCount,
 		"pending_retry_queue": queueSummary,
+		"dead_letter_count":   dlqCount,
+		"dead_letter_queue":   dlqSummary,
+		"recent_deliveries":   deliveriesCopy,
+		"recent_events":       eventsCopy,
 	}
 }
 
@@ -295,6 +318,10 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 		ctxInfo = doc.GetContextInfo()
 		mediaType = string(domain.MediaTypeDocument)
 		hasMedia = true
+		filename := doc.GetFileName()
+		if filename == "" {
+			filename = doc.GetTitle()
+		}
 		mediaInfo = &domain.MediaDownloadInfo{
 			DirectPath:  doc.GetDirectPath(),
 			EncFileHash: hex.EncodeToString(doc.GetFileEncSHA256()),
@@ -303,6 +330,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 			FileLength:  doc.GetFileLength(),
 			MimeType:    doc.GetMimetype(),
 			MediaType:   mediaType,
+			Filename:    filename,
 		}
 	} else if stk := evt.Message.GetStickerMessage(); stk != nil {
 		ctxInfo = stk.GetContextInfo()
@@ -420,27 +448,37 @@ func (h *EventHandler) forwardToWebhook(
 	start := time.Now()
 
 	var mediaBase64 string
-	mediaOmittedTooLarge := false
 	if msg.HasMedia && msg.MediaInfo != nil && h.sessionService != nil {
-		downloadCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-		data, err := h.sessionService.DownloadMedia(downloadCtx, *msg.MediaInfo)
-		cancel()
-		if err != nil {
-			log.Printf("[EVENT_HANDLER] Failed downloading media for %s: %v", msg.ID, err)
-		} else {
-			if len(data) > 30*1024*1024 {
-				log.Printf("[EVENT_HANDLER] Media for %s is %d bytes (>30MB). Omitting inline base64 to prevent HTTP 413 / HoL blocking.", msg.ID, len(data))
-				mediaOmittedTooLarge = true
-			} else {
+		// CLAIM-CHECK PATTERN:
+		// We only inline base64 if the media is small (<= 512 KB, e.g. quick photo snapshot/avatar).
+		// For larger files or documents, base64 is omitted from the webhook payload.
+		// Downstream systems stream it on-demand via GET /api/v1/media/{id}/download.
+		if msg.MediaInfo.FileLength > 0 && msg.MediaInfo.FileLength <= 512*1024 {
+			downloadCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			data, err := h.sessionService.DownloadMedia(downloadCtx, *msg.MediaInfo)
+			cancel()
+			if err == nil {
 				mediaBase64 = base64.StdEncoding.EncodeToString(data)
-				log.Printf("[EVENT_HANDLER] Successfully downloaded media for %s (%d bytes)", msg.ID, len(data))
 			}
 		}
 	}
 
 	effectiveText := msg.Text
 	if strings.TrimSpace(effectiveText) == "" && msg.HasMedia {
-		effectiveText = "[Foto terlampir]"
+		switch msg.MediaType {
+		case "document":
+			if msg.MediaInfo != nil && msg.MediaInfo.Filename != "" {
+				effectiveText = fmt.Sprintf("[Dokumen terlampir: %s]", msg.MediaInfo.Filename)
+			} else {
+				effectiveText = "[Dokumen terlampir]"
+			}
+		case "video":
+			effectiveText = "[Video terlampir]"
+		case "audio":
+			effectiveText = "[Audio terlampir]"
+		default:
+			effectiveText = "[Foto terlampir]"
+		}
 	}
 
 	payload := map[string]interface{}{
@@ -461,17 +499,25 @@ func (h *EventHandler) forwardToWebhook(
 		"session_role": h.webhookRole,
 	}
 
+	if msg.HasMedia && msg.MediaInfo != nil {
+		downloadURL := fmt.Sprintf("/api/v1/media/%s/download", msg.ID)
+		payload["download_url"] = downloadURL
+		payload["media_url"] = downloadURL
+		payload["media_info"] = msg.MediaInfo
+		if msg.MediaInfo.MimeType != "" {
+			payload["mime_type"] = msg.MediaInfo.MimeType
+		}
+		if msg.MediaInfo.Filename != "" {
+			payload["filename"] = msg.MediaInfo.Filename
+		}
+		if msg.MediaInfo.FileLength > 0 {
+			payload["file_length"] = msg.MediaInfo.FileLength
+			payload["file_size"] = msg.MediaInfo.FileLength
+		}
+	}
+
 	if mediaBase64 != "" {
 		payload["media_base64"] = mediaBase64
-		if msg.MediaInfo != nil {
-			payload["mime_type"] = msg.MediaInfo.MimeType
-		}
-	} else if mediaOmittedTooLarge {
-		payload["media_base64_omitted"] = true
-		payload["media_base64_omitted_reason"] = "file_exceeds_gateway_inline_threshold_30mb"
-		if msg.MediaInfo != nil {
-			payload["mime_type"] = msg.MediaInfo.MimeType
-		}
 	}
 
 	if senderAlt != "" {
@@ -737,11 +783,15 @@ func (h *EventHandler) processRetryQueue() {
 
 			item.Attempts++
 			item.LastError = errMsg
-			if item.Attempts >= 30 {
-				log.Printf("[WEBHOOK-RETRY] Dropping message %s after 30 failed attempts: %s", item.ID, errMsg)
+			if item.Attempts >= 5 {
+				log.Printf("[WEBHOOK-DLQ] Moving message %s to dead-letter queue after %d failed attempts: %s", item.ID, item.Attempts, errMsg)
+				h.deadLetterQueue = append(h.deadLetterQueue, item)
+				if len(h.deadLetterQueue) > 50 {
+					h.deadLetterQueue = h.deadLetterQueue[1:]
+				}
 				h.retryQueue = h.retryQueue[1:]
 			} else {
-				backoffSec := item.Attempts * 2
+				backoffSec := 1 << item.Attempts
 				if backoffSec > 30 {
 					backoffSec = 30
 				}

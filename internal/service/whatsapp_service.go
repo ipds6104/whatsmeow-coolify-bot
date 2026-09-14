@@ -136,6 +136,46 @@ func (w *WhatsAppServiceImpl) DownloadMedia(ctx context.Context, info domain.Med
 	return data, mime, nil
 }
 
+func (w *WhatsAppServiceImpl) DownloadMediaByID(ctx context.Context, id string) ([]byte, string, string, error) {
+	msg, err := w.store.GetMessageByID(ctx, id)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("database query error: %w", err)
+	}
+	if msg == nil {
+		return nil, "", "", domain.ErrMessageNotFound
+	}
+	if !msg.HasMedia || msg.MediaInfo == nil {
+		return nil, "", "", fmt.Errorf("message %s does not contain downloadable media", id)
+	}
+
+	data, mime, err := w.DownloadMedia(ctx, *msg.MediaInfo)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	filename := msg.MediaInfo.Filename
+	if filename == "" {
+		ext := "bin"
+		switch mime {
+		case "image/jpeg":
+			ext = "jpg"
+		case "image/png":
+			ext = "png"
+		case "image/webp":
+			ext = "webp"
+		case "application/pdf":
+			ext = "pdf"
+		case "audio/ogg", "audio/ogg; codecs=opus":
+			ext = "ogg"
+		case "video/mp4":
+			ext = "mp4"
+		}
+		filename = fmt.Sprintf("%s.%s", id, ext)
+	}
+
+	return data, mime, filename, nil
+}
+
 func (w *WhatsAppServiceImpl) GetRecentMessages(ctx context.Context, chatJID string, limit int) ([]domain.ChatMessage, error) {
 	return w.store.GetMessages(ctx, chatJID, limit)
 }

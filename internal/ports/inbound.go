@@ -25,6 +25,7 @@ type WhatsAppService interface {
 	ListGroups(ctx context.Context) ([]domain.GroupInfo, error)
 	GetGroupInfo(ctx context.Context, groupJID string) (domain.GroupInfo, error)
 	DownloadMedia(ctx context.Context, info domain.MediaDownloadInfo) ([]byte, string, error)
+	DownloadMediaByID(ctx context.Context, id string) ([]byte, string, string, error)
 	SendChatPresence(ctx context.Context, to string, state string) error
 	GetRecentMessages(ctx context.Context, chatJID string, limit int) ([]domain.ChatMessage, error)
 	GetAllRecentMessages(ctx context.Context, limit int) ([]domain.ChatMessage, error)

@@ -54,6 +54,8 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/messages/send-text", msgH.SendText)
 	mux.HandleFunc("POST /api/v1/messages/send-media", msgH.SendMedia)
 	mux.HandleFunc("POST /api/v1/media/download", msgH.DownloadMedia)
+	mux.HandleFunc("GET /api/v1/media/{id}/download", msgH.DownloadMediaByID)
+	mux.HandleFunc("GET /api/v1/media/{id}", msgH.DownloadMediaByID)
 	mux.HandleFunc("POST /api/v1/chats/presence", msgH.SendPresence)
 	mux.HandleFunc("POST /api/v1/presence", msgH.SendPresence)
 	mux.HandleFunc("GET /api/v1/chats/{jid}/messages", msgH.GetChatMessages)

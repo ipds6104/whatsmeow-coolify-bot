@@ -3,6 +3,8 @@ package rest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -127,6 +129,36 @@ func (h *MessageHandler) DownloadMedia(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// DownloadMediaByID streams a decrypted media attachment by message ID.
+func (h *MessageHandler) DownloadMediaByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		id = r.URL.Query().Get("id")
+	}
+	if id == "" {
+		WriteError(w, http.StatusBadRequest, "message id is required")
+		return
+	}
+
+	data, mimeType, filename, err := h.waService.DownloadMediaByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, domain.ErrMessageNotFound) {
+			WriteError(w, http.StatusNotFound, "message not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	if filename != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

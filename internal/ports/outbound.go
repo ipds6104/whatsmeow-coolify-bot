@@ -33,6 +33,7 @@ type WhatsAppClientPort interface {
 // SessionStorePort defines the outbound port for persistent storage of messages and sessions.
 type SessionStorePort interface {
 	SaveMessage(ctx context.Context, msg domain.ChatMessage) error
+	GetMessageByID(ctx context.Context, id string) (*domain.ChatMessage, error)
 	GetMessages(ctx context.Context, chatJID string, limit int) ([]domain.ChatMessage, error)
 	GetAllMessages(ctx context.Context, limit int) ([]domain.ChatMessage, error)
 	HasSession(ctx context.Context) (bool, error)

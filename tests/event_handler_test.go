@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -388,7 +389,7 @@ func TestEventHandler_413PayloadTooLarge_SelfHealing(t *testing.T) {
 
 	userJID := types.NewJID("6282234120921", types.DefaultUserServer)
 
-	// Send message with image / large media
+	// Send message with image / small media (100KB)
 	evtHandler.HandleEvent(&events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{
@@ -402,7 +403,8 @@ func TestEventHandler_413PayloadTooLarge_SelfHealing(t *testing.T) {
 		},
 		Message: &waE2E.Message{
 			ImageMessage: &waE2E.ImageMessage{
-				Caption: proto.String("ini pdfnya"),
+				Caption:    proto.String("ini pdfnya"),
+				FileLength: proto.Uint64(100 * 1024),
 			},
 		},
 	})
@@ -435,6 +437,89 @@ func TestEventHandler_413PayloadTooLarge_SelfHealing(t *testing.T) {
 	pendingCount, _ := diag["pending_retry_count"].(int)
 	if pendingCount != 0 {
 		t.Errorf("expected pending_retry_count to be 0, got %d", pendingCount)
+	}
+}
+
+func TestEventHandler_ClaimCheckPattern_LargeMedia_OmittedBase64(t *testing.T) {
+	var mu sync.Mutex
+	var receivedPayloads []map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		receivedPayloads = append(receivedPayloads, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	mockCli := &MockClient{connected: true, loggedIn: true}
+	mockNotif := &MockNotifier{}
+	mockStore := &MockStore{}
+
+	sessionService := service.NewSessionService(mockCli, mockNotif, mockStore, "628982157341", "Chrome (Linux)")
+	evtHandler := waAdapter.NewEventHandler(sessionService, mockNotif, mockStore, server.URL, "primary_bot")
+	defer evtHandler.Stop()
+
+	userJID := types.NewJID("6282234120921", types.DefaultUserServer)
+
+	// Send large PDF document (14.8 MB = 15,518,920 bytes)
+	evtHandler.HandleEvent(&events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     userJID,
+				Sender:   userJID,
+				IsFromMe: false,
+			},
+			ID:        "CLAIM_CHECK_DOC_001",
+			Timestamp: time.Now(),
+			PushName:  "Rekan Kerja",
+		},
+		Message: &waE2E.Message{
+			DocumentMessage: &waE2E.DocumentMessage{
+				Caption:    proto.String("ini pdfnya"),
+				FileName:   proto.String("laporan_keuangan.pdf"),
+				Mimetype:   proto.String("application/pdf"),
+				FileLength: proto.Uint64(15518920),
+			},
+		},
+	})
+
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedPayloads) != 1 {
+		t.Fatalf("expected 1 forwarded payload, got %d", len(receivedPayloads))
+	}
+
+	p := receivedPayloads[0]
+	if p["id"] != "CLAIM_CHECK_DOC_001" {
+		t.Errorf("expected id CLAIM_CHECK_DOC_001, got %v", p["id"])
+	}
+	if p["text"] != "ini pdfnya" {
+		t.Errorf("expected text 'ini pdfnya', got %v", p["text"])
+	}
+	if p["download_url"] != "/api/v1/media/CLAIM_CHECK_DOC_001/download" {
+		t.Errorf("expected download_url /api/v1/media/CLAIM_CHECK_DOC_001/download, got %v", p["download_url"])
+	}
+	if p["filename"] != "laporan_keuangan.pdf" {
+		t.Errorf("expected filename 'laporan_keuangan.pdf', got %v", p["filename"])
+	}
+	if _, hasB64 := p["media_base64"]; hasB64 {
+		t.Errorf("expected media_base64 to be omitted for large file, but found it in payload")
+	}
+
+	// Verify message was stored in store and can be retrieved
+	stored, err := mockStore.GetMessageByID(context.Background(), "CLAIM_CHECK_DOC_001")
+	if err != nil || stored == nil {
+		t.Fatalf("expected message to be stored in store, got %v (err: %v)", stored, err)
+	}
+	if stored.MediaInfo == nil || stored.MediaInfo.Filename != "laporan_keuangan.pdf" {
+		t.Errorf("expected stored media_info filename 'laporan_keuangan.pdf', got %+v", stored.MediaInfo)
 	}
 }
 

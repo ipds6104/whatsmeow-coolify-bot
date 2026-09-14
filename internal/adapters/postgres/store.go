@@ -214,6 +214,55 @@ func (s *Store) GetAllMessages(ctx context.Context, limit int) ([]domain.ChatMes
 	return messages, nil
 }
 
+// GetMessageByID retrieves a single message by its unique ID.
+func (s *Store) GetMessageByID(ctx context.Context, id string) (*domain.ChatMessage, error) {
+	query := `
+	SELECT id, chat_jid, sender_jid, COALESCE(sender_name, ''), timestamp, is_from_me, COALESCE(text, ''), COALESCE(media_type, ''), has_media, media_info, raw_data
+	FROM chat_messages
+	WHERE id = $1;
+	`
+	row := s.db.QueryRowContext(ctx, query, id)
+
+	var msg domain.ChatMessage
+	var mediaJSON, rawJSON []byte
+
+	err := row.Scan(
+		&msg.ID,
+		&msg.ChatJID,
+		&msg.SenderJID,
+		&msg.SenderName,
+		&msg.Timestamp,
+		&msg.IsFromMe,
+		&msg.Text,
+		&msg.MediaType,
+		&msg.HasMedia,
+		&mediaJSON,
+		&rawJSON,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to query message %s: %w", id, err)
+	}
+
+	if len(mediaJSON) > 0 && string(mediaJSON) != "null" {
+		var info domain.MediaDownloadInfo
+		if err := json.Unmarshal(mediaJSON, &info); err == nil {
+			msg.MediaInfo = &info
+		}
+	}
+
+	if len(rawJSON) > 0 && string(rawJSON) != "null" {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(rawJSON, &raw); err == nil {
+			msg.RawData = raw
+		}
+	}
+
+	return &msg, nil
+}
+
 // HasSession checks if whatsmeow has an active registered device session in the database.
 func (s *Store) HasSession(ctx context.Context) (bool, error) {
 	var count int

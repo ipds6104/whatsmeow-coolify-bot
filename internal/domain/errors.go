@@ -14,5 +14,6 @@ var (
 	ErrGroupNotFound        = errors.New("group not found or bot is not a member")
 	ErrMediaDownloadFailed  = errors.New("failed to download whatsapp media")
 	ErrBackupNotFound       = errors.New("backup record not found")
+	ErrMessageNotFound      = errors.New("message not found")
 	ErrUnauthorized         = errors.New("unauthorized: invalid or missing API key")
 )

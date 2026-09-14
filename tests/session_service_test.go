@@ -140,6 +140,15 @@ func (m *MockStore) SaveMessage(ctx context.Context, msg domain.ChatMessage) err
 	return nil
 }
 
+func (m *MockStore) GetMessageByID(ctx context.Context, id string) (*domain.ChatMessage, error) {
+	for _, msg := range m.messages {
+		if msg.ID == id {
+			return &msg, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *MockStore) GetMessages(ctx context.Context, chatJID string, limit int) ([]domain.ChatMessage, error) {
 	return m.messages, nil
 }

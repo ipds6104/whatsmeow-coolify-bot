@@ -58,4 +58,5 @@ type MediaDownloadInfo struct {
 	FileLength  uint64 `json:"file_length"`
 	MimeType    string `json:"mime_type"`
 	MediaType   string `json:"media_type"`
+	Filename    string `json:"filename,omitempty"`
 }
