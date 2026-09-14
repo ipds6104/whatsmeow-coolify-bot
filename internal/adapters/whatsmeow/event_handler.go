@@ -431,7 +431,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 		return
 	}
 
-	if chatMsg.IsFromMe {
+	if chatMsg.IsFromMe && h.webhookRole != "user_companion" {
 		log.Printf("[WEBHOOK] Forwarding skipped for message %s: message was sent by bot itself (IsFromMe=true)", msgID)
 		return
 	}
