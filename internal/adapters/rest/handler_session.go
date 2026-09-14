@@ -13,10 +13,11 @@ import (
 
 type SessionHandler struct {
 	sessionService ports.SessionService
+	apiKey         string
 }
 
-func NewSessionHandler(sessionService ports.SessionService) *SessionHandler {
-	return &SessionHandler{sessionService: sessionService}
+func NewSessionHandler(sessionService ports.SessionService, apiKey string) *SessionHandler {
+	return &SessionHandler{sessionService: sessionService, apiKey: apiKey}
 }
 
 // Healthz responds to Coolify & Traefik container health monitoring.
@@ -95,7 +96,7 @@ func (h *SessionHandler) WebPairingPage(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(renderWebPairingDashboard(status, qr)))
+	_, _ = w.Write([]byte(renderWebPairingDashboard(status, qr, h.apiKey)))
 }
 
 // GetQRCode provides live QR Code pairing data or a standalone HTML scanner UI.
@@ -112,14 +113,14 @@ func (h *SessionHandler) GetQRCode(w http.ResponseWriter, r *http.Request) {
 		status, _ := h.sessionService.GetStatus(r.Context())
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(renderWebPairingDashboard(status, qr)))
+		_, _ = w.Write([]byte(renderWebPairingDashboard(status, qr, h.apiKey)))
 		return
 	}
 
 	WriteJSON(w, http.StatusOK, qr)
 }
 
-func renderWebPairingDashboard(status domain.SessionStatus, qr domain.QRCodeResult) string {
+func renderWebPairingDashboard(status domain.SessionStatus, qr domain.QRCodeResult, defaultAPIKey string) string {
 	qrURL := ""
 	if qr.QRCode != "" {
 		qrURL = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=%s", url.QueryEscape(qr.QRCode))
@@ -377,7 +378,7 @@ func renderWebPairingDashboard(status domain.SessionStatus, qr domain.QRCodeResu
 			</div>
 
 			<div style="margin-top: 16px;">
-				<input type="password" id="api-key-input" class="input-text" placeholder="Masukkan API Key (jika diperlukan)" style="margin-bottom: 8px; text-align: center;" />
+				<input type="password" id="api-key-input" class="input-text" placeholder="Masukkan API Key (jika diperlukan)" value="%s" style="margin-bottom: 8px; text-align: center;" />
 			</div>
 		</div>
 	</div>
@@ -387,6 +388,7 @@ func renderWebPairingDashboard(status domain.SessionStatus, qr domain.QRCodeResu
 	<script>
 		let activeAPIKey = new URLSearchParams(window.location.search).get('key') 
 			|| new URLSearchParams(window.location.search).get('api_key') 
+			|| '%s'
 			|| localStorage.getItem('wa_api_key') 
 			|| '';
 
@@ -519,6 +521,8 @@ func renderWebPairingDashboard(status domain.SessionStatus, qr domain.QRCodeResu
 		fallbackCode(initialCode),
 		status.PhoneNumber,
 		qrURL,
+		defaultAPIKey,
+		defaultAPIKey,
 	)
 }
 

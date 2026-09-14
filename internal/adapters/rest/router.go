@@ -18,7 +18,7 @@ type RouterConfig struct {
 func NewRouter(cfg RouterConfig) http.Handler {
 	mux := http.NewServeMux()
 
-	sessionH := NewSessionHandler(cfg.SessionService)
+	sessionH := NewSessionHandler(cfg.SessionService, cfg.APIKey)
 	msgH := NewMessageHandler(cfg.WhatsAppService)
 	groupH := NewGroupHandler(cfg.WhatsAppService)
 	backupH := NewBackupHandler(cfg.BackupService)
