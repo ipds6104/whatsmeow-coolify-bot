@@ -351,3 +351,179 @@ func TestEventHandler_RetryQueueDowntimeResilience(t *testing.T) {
 	}
 }
 
+func TestEventHandler_413PayloadTooLarge_SelfHealing(t *testing.T) {
+	var mu sync.Mutex
+	var receivedPayloads []map[string]interface{}
+	attempts := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		attempts++
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Unlock()
+
+		// If media_base64 is present, simulate HTTP 413 Payload Too Large (Axum / Reverse proxy limit)
+		if _, hasB64 := body["media_base64"]; hasB64 {
+			http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		// Once media_base64 is stripped, accept the payload
+		mu.Lock()
+		receivedPayloads = append(receivedPayloads, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	mockCli := &MockClient{connected: true, loggedIn: true}
+	mockNotif := &MockNotifier{}
+	mockStore := &MockStore{}
+
+	sessionService := service.NewSessionService(mockCli, mockNotif, mockStore, "628982157341", "Chrome (Linux)")
+	evtHandler := waAdapter.NewEventHandler(sessionService, mockNotif, mockStore, server.URL, "primary_bot")
+	defer evtHandler.Stop()
+
+	userJID := types.NewJID("6282234120921", types.DefaultUserServer)
+
+	// Send message with image / large media
+	evtHandler.HandleEvent(&events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     userJID,
+				Sender:   userJID,
+				IsFromMe: false,
+			},
+			ID:        "DOC_413_MSG_001",
+			Timestamp: time.Now(),
+			PushName:  "Rekan Kerja",
+		},
+		Message: &waE2E.Message{
+			ImageMessage: &waE2E.ImageMessage{
+				Caption: proto.String("ini pdfnya"),
+			},
+		},
+	})
+
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedPayloads) != 1 {
+		t.Fatalf("expected exactly 1 payload accepted after stripping media_base64, got %d (total attempts: %d)", len(receivedPayloads), attempts)
+	}
+
+	p := receivedPayloads[0]
+	if p["id"] != "DOC_413_MSG_001" {
+		t.Errorf("expected id DOC_413_MSG_001, got %v", p["id"])
+	}
+	if p["text"] != "ini pdfnya" {
+		t.Errorf("expected text 'ini pdfnya', got %v", p["text"])
+	}
+	if p["media_base64_stripped"] != true {
+		t.Errorf("expected media_base64_stripped true, got %v", p["media_base64_stripped"])
+	}
+	if _, hasB64 := p["media_base64"]; hasB64 {
+		t.Errorf("expected media_base64 to be stripped from payload, but found it")
+	}
+
+	// Verify retry queue is EMPTY (no HoL blocking)
+	diag := evtHandler.GetDiagnostics()
+	pendingCount, _ := diag["pending_retry_count"].(int)
+	if pendingCount != 0 {
+		t.Errorf("expected pending_retry_count to be 0, got %d", pendingCount)
+	}
+}
+
+func TestEventHandler_NonRetryable4xx_NoHoLBlocking(t *testing.T) {
+	var mu sync.Mutex
+	var receivedIDs []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		id, _ := body["id"].(string)
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		if id == "FAIL_400_MSG" {
+			// Simulate 400 Bad Request
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+
+		receivedIDs = append(receivedIDs, id)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	mockCli := &MockClient{connected: true, loggedIn: true}
+	mockNotif := &MockNotifier{}
+	mockStore := &MockStore{}
+
+	sessionService := service.NewSessionService(mockCli, mockNotif, mockStore, "628982157341", "Chrome (Linux)")
+	evtHandler := waAdapter.NewEventHandler(sessionService, mockNotif, mockStore, server.URL, "primary_bot")
+	defer evtHandler.Stop()
+
+	userJID := types.NewJID("6289625345646", types.DefaultUserServer)
+
+	// 1. Send failing message that returns 400
+	evtHandler.HandleEvent(&events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     userJID,
+				Sender:   userJID,
+				IsFromMe: false,
+			},
+			ID:        "FAIL_400_MSG",
+			Timestamp: time.Now(),
+			PushName:  "Test",
+		},
+		Message: &waE2E.Message{
+			Conversation: proto.String("Pesan gagal"),
+		},
+	})
+
+	time.Sleep(100 * time.Millisecond)
+
+	// 2. Immediately send subsequent message ("Aina?")
+	evtHandler.HandleEvent(&events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     userJID,
+				Sender:   userJID,
+				IsFromMe: false,
+			},
+			ID:        "AINA_MSG_002",
+			Timestamp: time.Now(),
+			PushName:  "Ihza",
+		},
+		Message: &waE2E.Message{
+			Conversation: proto.String("Aina?"),
+		},
+	})
+
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// FAIL_400_MSG was dropped without entering retry queue.
+	// AINA_MSG_002 must be delivered immediately without any delay!
+	if len(receivedIDs) != 1 || receivedIDs[0] != "AINA_MSG_002" {
+		t.Fatalf("expected AINA_MSG_002 delivered immediately without HoL blocking, got: %v", receivedIDs)
+	}
+
+	diag := evtHandler.GetDiagnostics()
+	pendingCount, _ := diag["pending_retry_count"].(int)
+	if pendingCount != 0 {
+		t.Errorf("expected pending_retry_count to be 0, got %d", pendingCount)
+	}
+}
+
+

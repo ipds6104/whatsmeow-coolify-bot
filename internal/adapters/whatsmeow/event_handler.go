@@ -420,6 +420,7 @@ func (h *EventHandler) forwardToWebhook(
 	start := time.Now()
 
 	var mediaBase64 string
+	mediaOmittedTooLarge := false
 	if msg.HasMedia && msg.MediaInfo != nil && h.sessionService != nil {
 		downloadCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		data, err := h.sessionService.DownloadMedia(downloadCtx, *msg.MediaInfo)
@@ -427,8 +428,13 @@ func (h *EventHandler) forwardToWebhook(
 		if err != nil {
 			log.Printf("[EVENT_HANDLER] Failed downloading media for %s: %v", msg.ID, err)
 		} else {
-			mediaBase64 = base64.StdEncoding.EncodeToString(data)
-			log.Printf("[EVENT_HANDLER] Successfully downloaded media for %s (%d bytes)", msg.ID, len(data))
+			if len(data) > 30*1024*1024 {
+				log.Printf("[EVENT_HANDLER] Media for %s is %d bytes (>30MB). Omitting inline base64 to prevent HTTP 413 / HoL blocking.", msg.ID, len(data))
+				mediaOmittedTooLarge = true
+			} else {
+				mediaBase64 = base64.StdEncoding.EncodeToString(data)
+				log.Printf("[EVENT_HANDLER] Successfully downloaded media for %s (%d bytes)", msg.ID, len(data))
+			}
 		}
 	}
 
@@ -457,6 +463,12 @@ func (h *EventHandler) forwardToWebhook(
 
 	if mediaBase64 != "" {
 		payload["media_base64"] = mediaBase64
+		if msg.MediaInfo != nil {
+			payload["mime_type"] = msg.MediaInfo.MimeType
+		}
+	} else if mediaOmittedTooLarge {
+		payload["media_base64_omitted"] = true
+		payload["media_base64_omitted_reason"] = "file_exceeds_gateway_inline_threshold_30mb"
 		if msg.MediaInfo != nil {
 			payload["mime_type"] = msg.MediaInfo.MimeType
 		}
@@ -540,13 +552,24 @@ func (h *EventHandler) forwardToWebhook(
 	h.retryMu.Unlock()
 
 	// Direct fast-path delivery
-	success, errMsg := h.deliverWebhookPayload(body, msg.ID, msg.ChatJID, msg.SenderJID, msg.Text, false)
+	success, statusCode, errMsg := h.deliverWebhookPayload(body, msg.ID, msg.ChatJID, msg.SenderJID, msg.Text, false)
 	if !success {
+		if isNonRetryableStatus(statusCode) {
+			log.Printf("[WEBHOOK] Discarding message %s from %s: non-retryable client error (status %d: %s), skipping retry queue to avoid HoL blocking", msg.ID, msg.SenderJID, statusCode, errMsg)
+			return
+		}
+
 		// Delivery failed (e.g. Aina is down, restarting, or redeploying). Enqueue for durable background retry.
 		h.retryMu.Lock()
 		h.enqueueRetryLocked(body, msg.ID, msg.ChatJID, msg.SenderJID, msg.Text, errMsg)
 		h.retryMu.Unlock()
 	}
+}
+
+func isNonRetryableStatus(status int) bool {
+	// 4xx status codes are client errors (deterministic rejections).
+	// Exception: 429 Too Many Requests, which should be retried after backoff.
+	return status >= 400 && status < 500 && status != http.StatusTooManyRequests
 }
 
 func (h *EventHandler) enqueueRetryLocked(body []byte, msgID, chatJID, senderJID, text, reason string) {
@@ -574,7 +597,7 @@ func (h *EventHandler) enqueueRetryLocked(body []byte, msgID, chatJID, senderJID
 	}
 }
 
-func (h *EventHandler) deliverWebhookPayload(body []byte, msgID, chatJID, senderJID, text string, isRetry bool) (bool, string) {
+func (h *EventHandler) deliverWebhookPayload(body []byte, msgID, chatJID, senderJID, text string, isRetry bool) (bool, int, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -591,7 +614,7 @@ func (h *EventHandler) deliverWebhookPayload(body []byte, msgID, chatJID, sender
 			Error:      errMsg,
 			DurationMs: time.Since(start).Milliseconds(),
 		})
-		return false, errMsg
+		return false, 0, errMsg
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -612,7 +635,7 @@ func (h *EventHandler) deliverWebhookPayload(body []byte, msgID, chatJID, sender
 			Error:      errMsg,
 			DurationMs: durationMs,
 		})
-		return false, errMsg
+		return false, 0, errMsg
 	}
 	defer resp.Body.Close()
 
@@ -632,12 +655,30 @@ func (h *EventHandler) deliverWebhookPayload(body []byte, msgID, chatJID, sender
 			prefix = "[WEBHOOK-RETRY]"
 		}
 		log.Printf("%s Message %s from %s delivered successfully to %s (status %d, %dms)", prefix, msgID, senderJID, h.webhookURL, resp.StatusCode, durationMs)
-		return true, ""
+		return true, resp.StatusCode, ""
+	}
+
+	// Self-healing check for HTTP 413 Payload Too Large:
+	// If the receiver rejected the body due to size, check if the payload contains media_base64.
+	// If so, strip the media_base64 and retry immediately once to preserve text and prevent queue stall!
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		var payload map[string]interface{}
+		if unmarshalErr := json.Unmarshal(body, &payload); unmarshalErr == nil {
+			if _, hasB64 := payload["media_base64"]; hasB64 {
+				delete(payload, "media_base64")
+				payload["media_base64_stripped"] = true
+				payload["media_base64_stripped_reason"] = "receiver_413_payload_too_large"
+				if strippedBody, marshalErr := json.Marshal(payload); marshalErr == nil {
+					log.Printf("[WEBHOOK] Message %s received 413 Payload Too Large. Stripping media_base64 and immediately re-attempting delivery to preserve text/metadata...", msgID)
+					return h.deliverWebhookPayload(strippedBody, msgID, chatJID, senderJID, text, isRetry)
+				}
+			}
+		}
 	}
 
 	errMsg := fmt.Sprintf("Non-2xx HTTP status %d", resp.StatusCode)
 	log.Printf("[WEBHOOK] Message %s to %s returned %s (%dms)", msgID, h.webhookURL, errMsg, durationMs)
-	return false, errMsg
+	return false, resp.StatusCode, errMsg
 }
 
 func (h *EventHandler) startRetryWorker() {
@@ -673,7 +714,7 @@ func (h *EventHandler) processRetryQueue() {
 		h.retryMu.Unlock()
 
 		// Attempt delivery
-		success, errMsg := h.deliverWebhookPayload(item.Payload, item.ID, item.ChatJID, item.SenderJID, item.Text, true)
+		success, statusCode, errMsg := h.deliverWebhookPayload(item.Payload, item.ID, item.ChatJID, item.SenderJID, item.Text, true)
 
 		h.retryMu.Lock()
 		if len(h.retryQueue) == 0 || h.retryQueue[0] != item {
@@ -687,6 +728,13 @@ func (h *EventHandler) processRetryQueue() {
 			h.retryMu.Unlock()
 			continue
 		} else {
+			if isNonRetryableStatus(statusCode) {
+				log.Printf("[WEBHOOK-RETRY] Dropping message %s due to non-retryable client error (status %d: %s) to prevent Head-of-Line blocking", item.ID, statusCode, errMsg)
+				h.retryQueue = h.retryQueue[1:]
+				h.retryMu.Unlock()
+				continue
+			}
+
 			item.Attempts++
 			item.LastError = errMsg
 			if item.Attempts >= 30 {
