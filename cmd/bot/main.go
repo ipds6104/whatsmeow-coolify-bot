@@ -68,8 +68,8 @@ func main() {
 	rawClient := whatsmeow.NewClient(device, waLogger)
 
 	// 3. Outbound Driven Adapters
-	clientAdapter := waAdapter.NewClientAdapter(rawClient)
-	notifier := discord.NewNotifier(cfg.DiscordWebhookURL)
+	clientAdapter := waAdapter.NewClientAdapter(rawClient, container, waLogger)
+	notifier := discord.NewNotifier(cfg.DiscordWebhookURL, cfg.CoolifyFQDN, cfg.APIKey)
 	guard := antiban.NewGuard(cfg.AntibanPreset)
 	pgStore := postgres.NewStore(db)
 

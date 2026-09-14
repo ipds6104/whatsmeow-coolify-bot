@@ -17,10 +17,10 @@ func (w *responseWriterWrapper) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// AuthMiddleware validates X-API-Key or Bearer token header. Skips /healthz.
+// AuthMiddleware validates X-API-Key or Bearer token header. Skips /healthz, /, and /pair.
 func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/" || r.URL.Path == "/pair" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -40,6 +40,9 @@ func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 		}
 		if key == "" {
 			key = r.URL.Query().Get("api_key")
+		}
+		if key == "" {
+			key = r.URL.Query().Get("key")
 		}
 
 		if key != apiKey {

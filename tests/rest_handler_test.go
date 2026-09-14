@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/antiban"
@@ -266,3 +267,45 @@ func TestREST_SendPresence(t *testing.T) {
 		t.Fatalf("expected status 200 on fallback endpoint, got %d (body: %s)", w2.Code, w2.Body.String())
 	}
 }
+
+func TestREST_WebPairingDashboard(t *testing.T) {
+	router := setupTestRouter(t, "secret-key-123")
+
+	// 1. Test root / route without API key
+	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	if w1.Code != http.StatusOK {
+		t.Fatalf("expected status 200 on root /, got %d", w1.Code)
+	}
+	if !strings.Contains(w1.Body.String(), "Device Pairing Dashboard") {
+		t.Errorf("expected HTML body to contain 'Device Pairing Dashboard'")
+	}
+
+	// 2. Test /pair route without API key
+	req2 := httptest.NewRequest(http.MethodGet, "/pair", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected status 200 on /pair, got %d", w2.Code)
+	}
+	if !strings.Contains(w2.Body.String(), "Device Pairing Dashboard") {
+		t.Errorf("expected HTML body to contain 'Device Pairing Dashboard'")
+	}
+}
+
+func TestREST_AuthMiddlewareQueryKey(t *testing.T) {
+	router := setupTestRouter(t, "secret-key-123")
+
+	// Test authenticated endpoint with ?key= query param
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session/status?key=secret-key-123", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 when using ?key= query param, got %d", w.Code)
+	}
+}
+

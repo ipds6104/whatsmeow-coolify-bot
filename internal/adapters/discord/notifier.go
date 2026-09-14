@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/ports"
@@ -14,18 +16,36 @@ import (
 
 // Notifier sends formatted alert webhooks and pairing codes to a Discord channel.
 type Notifier struct {
-	webhookURL string
-	httpClient *http.Client
+	webhookURL  string
+	coolifyFQDN string
+	apiKey      string
+	httpClient  *http.Client
 }
 
 // Ensure Notifier implements ports.NotifierPort
 var _ ports.NotifierPort = (*Notifier)(nil)
 
-func NewNotifier(webhookURL string) *Notifier {
+func NewNotifier(webhookURL string, coolifyFQDN string, apiKey string) *Notifier {
 	return &Notifier{
-		webhookURL: webhookURL,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		webhookURL:  webhookURL,
+		coolifyFQDN: strings.TrimRight(coolifyFQDN, "/"),
+		apiKey:      apiKey,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+func (n *Notifier) getWebPairingURL() string {
+	baseURL := n.coolifyFQDN
+	if baseURL == "" {
+		baseURL = "http://localhost:3000"
+	}
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		baseURL = "https://" + baseURL
+	}
+	if n.apiKey != "" {
+		return fmt.Sprintf("%s/pair?key=%s", baseURL, url.QueryEscape(n.apiKey))
+	}
+	return baseURL + "/pair"
 }
 
 type discordEmbed struct {
@@ -71,6 +91,8 @@ func (n *Notifier) NotifyPairingCode(ctx context.Context, code string, attempt i
 		return nil
 	}
 
+	webPairURL := n.getWebPairingURL()
+
 	embed := discordEmbed{
 		Title:       "🔑 KODE PAIRING WHATSAPP BARU",
 		Description: fmt.Sprintf("Salin kode di bawah ini lalu masukkan ke WhatsApp HP Anda:\n\n# `%s`\n", code),
@@ -78,8 +100,16 @@ func (n *Notifier) NotifyPairingCode(ctx context.Context, code string, attempt i
 		Fields: []discordField{
 			{Name: "Percobaan", Value: fmt.Sprintf("#%d / 20", attempt), Inline: true},
 			{Name: "Masa Berlaku", Value: "~3 Menit", Inline: true},
-			{Name: "Langkah di HP", Value: "Buka WA di HP ➔ Setelan ➔ Perangkat Tertaut ➔ Tautkan dengan nomor telepon ➔ Masukkan kode di atas", Inline: false},
-			{Name: "Tautan Cepat (One-Click)", Value: "[📲 Buka WhatsApp Perangkat Tertaut](https://wa.me/settings/linked_devices) • [📷 Scan QR Scanner Web](https://wa.dvlpid.my.id/api/v1/session/qr)", Inline: false},
+			{
+				Name:   "📲 Tautan Cepat (Buka di HP)",
+				Value:  fmt.Sprintf("[🌐 Buka Web Pairing & QR Scanner](%s) • [📲 Buka Perangkat Tertaut](https://wa.me/settings/linked_devices)", webPairURL),
+				Inline: false,
+			},
+			{
+				Name:   "📋 Langkah di WhatsApp HP",
+				Value:  "Buka WA di HP ➔ **Setelan** ➔ **Perangkat Tertaut** ➔ **Tautkan dengan nomor telepon** ➔ Masukkan kode di atas",
+				Inline: false,
+			},
 		},
 		Footer:    &discordFooter{Text: "whatsmeow-coolify-bot • Auto-Pairing System"},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -94,8 +124,74 @@ func (n *Notifier) NotifyPairingCode(ctx context.Context, code string, attempt i
 }
 
 func (n *Notifier) NotifyLogout(ctx context.Context, reason string) error {
-	msg := fmt.Sprintf("⚠️ **WhatsApp Logout Paksa Terdeteksi!**\nAlasan: `%s`\nSistem sedang memulai generate kode pairing baru secara otomatis...", reason)
-	return n.Notify(ctx, msg)
+	log.Printf("[LOGOUT ALERT] WhatsApp logout detected: %s", reason)
+	if n.webhookURL == "" {
+		return nil
+	}
+
+	webPairURL := n.getWebPairingURL()
+
+	embed := discordEmbed{
+		Title:       "⚠️ WhatsApp Logout Paksa Terdeteksi",
+		Description: fmt.Sprintf("Sesi WhatsApp terputus dari server.\n**Alasan**: `%s`\n\nSistem self-healing otomatis menginisialisasi ulang sesi perangkat dan meminta kode pairing baru ke WhatsApp server.", reason),
+		Color:       0xED4245, // Red
+		Fields: []discordField{
+			{
+				Name:   "🌐 Buka Web Dashboard Pairing",
+				Value:  fmt.Sprintf("[📲 Klik Disini untuk Buka Web Pairing & QR Scanner](%s)", webPairURL),
+				Inline: false,
+			},
+			{
+				Name:   "📋 Panduan Pemulihan",
+				Value:  "1. Pastikan nomor HP Anda aktif di aplikasi WhatsApp.\n2. Buka **Setelan ➔ Perangkat Tertaut ➔ Tautkan Perangkat**.\n3. Masukkan kode pairing baru atau scan QR code dari link di atas.",
+				Inline: false,
+			},
+		},
+		Footer:    &discordFooter{Text: "whatsmeow-coolify-bot • Self-Healing System"},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payload := webhookPayload{
+		Content: "🚨 **PERINGATAN: Sesi WhatsApp Terputus (Perlu Ditautkan Ulang)**",
+		Embeds:  []discordEmbed{embed},
+	}
+
+	return n.post(ctx, payload)
+}
+
+func (n *Notifier) NotifyAutoPairingExhausted(ctx context.Context, phone string) error {
+	if n.webhookURL == "" {
+		return nil
+	}
+
+	webPairURL := n.getWebPairingURL()
+
+	embed := discordEmbed{
+		Title:       "⏳ Batas Waktu Auto-Pairing Selesai",
+		Description: fmt.Sprintf("Sistem telah mencoba menghasilkan kode pairing untuk nomor `%s`, namun kode belum sempat dikonfirmasi di HP.\n\nTidak perlu panik! Bot tetap standby. Anda dapat membuat kode baru atau memindai QR code kapan saja melalui Web Dashboard:", phone),
+		Color:       0xFEE75C, // Yellow
+		Fields: []discordField{
+			{
+				Name:   "🌐 Web Pairing Dashboard",
+				Value:  fmt.Sprintf("[📲 Buka Web Dashboard Pairing](%s)", webPairURL),
+				Inline: false,
+			},
+			{
+				Name:   "💡 Tips Cepat",
+				Value:  "Buka tautan di atas dari browser HP Anda, lalu tekan tombol **Minta Kode Baru** atau arahkan kamera WhatsApp ke QR Code.",
+				Inline: false,
+			},
+		},
+		Footer:    &discordFooter{Text: "whatsmeow-coolify-bot • Standby Mode"},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payload := webhookPayload{
+		Content: "ℹ️ **Informasi Sesi: Menunggu Konfirmasi Penautan WhatsApp**",
+		Embeds:  []discordEmbed{embed},
+	}
+
+	return n.post(ctx, payload)
 }
 
 func (n *Notifier) post(ctx context.Context, payload webhookPayload) error {

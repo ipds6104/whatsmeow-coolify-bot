@@ -233,8 +233,8 @@ func (s *SessionServiceImpl) SupervisorLoop(ctx context.Context) {
 		case <-s.needsPairing:
 			if s.phoneNumber != "" {
 				if err := s.requestPairingWithRetry(ctx, s.phoneNumber); err != nil {
-					log.Printf("auto re-pairing failed: %v", err)
-					_ = s.notifier.Notify(ctx, ":x: Auto-pairing gagal berulang kali. Silakan picu ulang via REST API.")
+					log.Printf("auto re-pairing failed or exhausted: %v", err)
+					_ = s.notifier.NotifyAutoPairingExhausted(ctx, s.phoneNumber)
 				}
 			}
 

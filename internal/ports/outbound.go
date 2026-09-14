@@ -27,6 +27,7 @@ type WhatsAppClientPort interface {
 	SetStatusMessage(ctx context.Context, status string) error
 	SendStatusBroadcast(ctx context.Context, status domain.StatusBroadcastMessage) (string, error)
 	RevokeMessage(ctx context.Context, chatJID string, messageID string) error
+	ResetDevice(ctx context.Context) error
 	AddEventHandler(handler func(evt interface{}))
 }
 
@@ -44,6 +45,7 @@ type NotifierPort interface {
 	Notify(ctx context.Context, message string) error
 	NotifyPairingCode(ctx context.Context, code string, attempt int) error
 	NotifyLogout(ctx context.Context, reason string) error
+	NotifyAutoPairingExhausted(ctx context.Context, phone string) error
 }
 
 // AntiBanGuardPort defines the outbound port for message rate-limiting, human typing delays, and warmup tiers.

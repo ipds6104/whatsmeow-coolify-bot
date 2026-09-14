@@ -27,6 +27,10 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	// Healthcheck endpoint (Unauthenticated for Traefik / Coolify health monitoring)
 	mux.HandleFunc("GET /healthz", sessionH.Healthz)
 
+	// Interactive Web Pairing Dashboard
+	mux.HandleFunc("GET /{$}", sessionH.WebPairingPage)
+	mux.HandleFunc("GET /pair", sessionH.WebPairingPage)
+
 	// Diagnostics & debug endpoint
 	mux.HandleFunc("GET /api/v1/debug", func(w http.ResponseWriter, r *http.Request) {
 		status, _ := cfg.SessionService.GetStatus(r.Context())

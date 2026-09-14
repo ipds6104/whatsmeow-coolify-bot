@@ -107,6 +107,10 @@ func (m *MockClient) RevokeMessage(ctx context.Context, chatJID string, messageI
 	return nil
 }
 
+func (m *MockClient) ResetDevice(ctx context.Context) error {
+	return nil
+}
+
 func (m *MockClient) AddEventHandler(handler func(evt interface{})) {}
 
 // MockNotifier implements ports.NotifierPort
@@ -127,6 +131,11 @@ func (m *MockNotifier) NotifyPairingCode(ctx context.Context, code string, attem
 
 func (m *MockNotifier) NotifyLogout(ctx context.Context, reason string) error {
 	m.notifs = append(m.notifs, "logout: "+reason)
+	return nil
+}
+
+func (m *MockNotifier) NotifyAutoPairingExhausted(ctx context.Context, phone string) error {
+	m.notifs = append(m.notifs, "exhausted: "+phone)
 	return nil
 }
 

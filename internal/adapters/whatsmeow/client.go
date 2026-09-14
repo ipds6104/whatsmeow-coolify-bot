@@ -3,14 +3,21 @@ package whatsmeow
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
@@ -19,50 +26,148 @@ import (
 
 // ClientAdapter wraps *whatsmeow.Client to implement ports.WhatsAppClientPort.
 type ClientAdapter struct {
-	client *whatsmeow.Client
+	client    *whatsmeow.Client
+	container *sqlstore.Container
+	waLogger  waLog.Logger
+	handlers  []func(evt interface{})
+	mu        sync.RWMutex
 }
 
 var _ ports.WhatsAppClientPort = (*ClientAdapter)(nil)
 
-func NewClientAdapter(client *whatsmeow.Client) *ClientAdapter {
-	return &ClientAdapter{client: client}
+func NewClientAdapter(client *whatsmeow.Client, container *sqlstore.Container, waLogger waLog.Logger) *ClientAdapter {
+	return &ClientAdapter{
+		client:    client,
+		container: container,
+		waLogger:  waLogger,
+		handlers:  make([]func(evt interface{}), 0),
+	}
+}
+
+func (c *ClientAdapter) getClient() *whatsmeow.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client
+}
+
+func (c *ClientAdapter) AddEventHandler(handler func(evt interface{})) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.handlers = append(c.handlers, handler)
+	if c.client != nil {
+		c.client.AddEventHandler(handler)
+	}
+}
+
+func (c *ClientAdapter) ResetDevice(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.container == nil {
+		return errors.New("cannot reset device: sqlstore container is nil")
+	}
+
+	log.Println("[WHATSMEOW-SELF-HEAL] Provisioning a fresh in-memory device store...")
+	if c.client != nil {
+		c.client.Disconnect()
+	}
+
+	newDevice := c.container.NewDevice()
+	newClient := whatsmeow.NewClient(newDevice, c.waLogger)
+	for _, handler := range c.handlers {
+		newClient.AddEventHandler(handler)
+	}
+	c.client = newClient
+	log.Println("[WHATSMEOW-SELF-HEAL] Fresh device store and whatsmeow client re-initialized.")
+	return nil
+}
+
+func (c *ClientAdapter) ensureValidDevice(ctx context.Context) error {
+	client := c.getClient()
+	if client != nil && client.Store != nil && !client.Store.Deleted {
+		return nil
+	}
+
+	log.Println("[WHATSMEOW-SELF-HEAL] Device is marked deleted or missing. Recreating fresh device...")
+	return c.ResetDevice(ctx)
 }
 
 func (c *ClientAdapter) Connect() error {
-	return c.client.Connect()
+	if err := c.ensureValidDevice(context.Background()); err != nil {
+		return err
+	}
+
+	client := c.getClient()
+	err := client.Connect()
+	if errors.Is(err, store.ErrDeviceDeleted) {
+		log.Println("[WHATSMEOW-SELF-HEAL] Connect failed with ErrDeviceDeleted. Auto-recovering...")
+		if resetErr := c.ResetDevice(context.Background()); resetErr != nil {
+			return resetErr
+		}
+		return c.getClient().Connect()
+	}
+	return err
 }
 
 func (c *ClientAdapter) Disconnect() {
-	c.client.Disconnect()
+	client := c.getClient()
+	if client != nil {
+		client.Disconnect()
+	}
 }
 
 func (c *ClientAdapter) IsConnected() bool {
-	return c.client.IsConnected()
+	client := c.getClient()
+	return client != nil && client.IsConnected()
 }
 
 func (c *ClientAdapter) IsLoggedIn() bool {
-	return c.client.Store != nil && c.client.Store.ID != nil
+	client := c.getClient()
+	return client != nil && client.Store != nil && client.Store.ID != nil
 }
 
 func (c *ClientAdapter) GetDeviceJID() string {
-	if c.client.Store != nil && c.client.Store.ID != nil {
-		return c.client.Store.ID.String()
+	client := c.getClient()
+	if client != nil && client.Store != nil && client.Store.ID != nil {
+		return client.Store.ID.String()
 	}
 	return ""
 }
 
 func (c *ClientAdapter) GetDeviceLID() string {
-	if c.client.Store != nil && !c.client.Store.LID.IsEmpty() {
-		return c.client.Store.LID.ToNonAD().String()
+	client := c.getClient()
+	if client != nil && client.Store != nil && !client.Store.LID.IsEmpty() {
+		return client.Store.LID.ToNonAD().String()
 	}
 	return ""
 }
 
 func (c *ClientAdapter) PairPhone(ctx context.Context, phone string, clientDisplayName string) (string, error) {
+	if err := c.ensureValidDevice(ctx); err != nil {
+		return "", err
+	}
+
 	if clientDisplayName == "" {
 		clientDisplayName = "Chrome (Linux)"
 	}
-	return c.client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, clientDisplayName)
+
+	client := c.getClient()
+	code, err := client.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, clientDisplayName)
+	if errors.Is(err, store.ErrDeviceDeleted) {
+		log.Println("[WHATSMEOW-SELF-HEAL] PairPhone encountered ErrDeviceDeleted. Auto-recovering fresh device...")
+		if resetErr := c.ResetDevice(ctx); resetErr != nil {
+			return "", resetErr
+		}
+		freshClient := c.getClient()
+		if !freshClient.IsConnected() {
+			if connErr := freshClient.Connect(); connErr != nil {
+				return "", fmt.Errorf("failed to connect after auto-recover: %w", connErr)
+			}
+			time.Sleep(1500 * time.Millisecond)
+		}
+		return freshClient.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, clientDisplayName)
+	}
+	return code, err
 }
 
 var mentionRegex = regexp.MustCompile(`@(\d{8,16})`)
@@ -122,7 +227,7 @@ func (c *ClientAdapter) SendTextMessage(ctx context.Context, to string, text str
 		msg.Conversation = proto.String(text)
 	}
 
-	resp, err := c.client.SendMessage(ctx, targetJID, msg)
+	resp, err := c.getClient().SendMessage(ctx, targetJID, msg)
 	if err != nil {
 		return "", err
 	}
@@ -148,7 +253,7 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 		waMediaType = whatsmeow.MediaDocument
 	}
 
-	uploaded, err := c.client.Upload(ctx, media.Data, waMediaType)
+	uploaded, err := c.getClient().Upload(ctx, media.Data, waMediaType)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload media: %w", err)
 	}
@@ -223,7 +328,7 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 		}
 	}
 
-	resp, err := c.client.SendMessage(ctx, targetJID, msg)
+	resp, err := c.getClient().SendMessage(ctx, targetJID, msg)
 	if err != nil {
 		return "", err
 	}
@@ -259,7 +364,7 @@ func (c *ClientAdapter) DownloadMedia(ctx context.Context, info domain.MediaDown
 		waMediaType = whatsmeow.MediaDocument
 	}
 
-	return c.client.DownloadMediaWithPath(
+	return c.getClient().DownloadMediaWithPath(
 		ctx,
 		info.DirectPath,
 		encFileHash,
@@ -277,7 +382,7 @@ func (c *ClientAdapter) GetGroupInfo(ctx context.Context, groupJID string) (doma
 		return domain.GroupInfo{}, fmt.Errorf("invalid group jid: %w", err)
 	}
 
-	rawInfo, err := c.client.GetGroupInfo(ctx, jid)
+	rawInfo, err := c.getClient().GetGroupInfo(ctx, jid)
 	if err != nil {
 		return domain.GroupInfo{}, err
 	}
@@ -286,7 +391,7 @@ func (c *ClientAdapter) GetGroupInfo(ctx context.Context, groupJID string) (doma
 }
 
 func (c *ClientAdapter) GetJoinedGroups(ctx context.Context) ([]domain.GroupInfo, error) {
-	rawGroups, err := c.client.GetJoinedGroups(ctx)
+	rawGroups, err := c.getClient().GetJoinedGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -298,9 +403,6 @@ func (c *ClientAdapter) GetJoinedGroups(ctx context.Context) ([]domain.GroupInfo
 	return groups, nil
 }
 
-func (c *ClientAdapter) AddEventHandler(handler func(evt interface{})) {
-	c.client.AddEventHandler(handler)
-}
 
 func (c *ClientAdapter) SendChatPresence(ctx context.Context, to string, state string) error {
 	recipientJID, err := c.parseJID(to)
@@ -318,17 +420,18 @@ func (c *ClientAdapter) SendChatPresence(ctx context.Context, to string, state s
 		chatPresence = types.ChatPresenceComposing
 	}
 
-	return c.client.SendChatPresence(ctx, recipientJID, chatPresence, types.ChatPresenceMediaText)
+	return c.getClient().SendChatPresence(ctx, recipientJID, chatPresence, types.ChatPresenceMediaText)
 }
 
 func (c *ClientAdapter) GetProfilePicture(ctx context.Context, jidStr string, preview bool) (*domain.ProfilePictureResult, error) {
 	var target types.JID
 	jidStr = strings.TrimSpace(jidStr)
+	client := c.getClient()
 	if jidStr == "" || strings.EqualFold(jidStr, "me") || strings.EqualFold(jidStr, "self") {
-		if c.client.Store == nil || c.client.Store.ID == nil {
+		if client.Store == nil || client.Store.ID == nil {
 			return nil, fmt.Errorf("client is not logged in")
 		}
-		target = c.client.Store.ID.ToNonAD()
+		target = client.Store.ID.ToNonAD()
 	} else {
 		var err error
 		target, err = c.parseJID(jidStr)
@@ -340,7 +443,7 @@ func (c *ClientAdapter) GetProfilePicture(ctx context.Context, jidStr string, pr
 	params := &whatsmeow.GetProfilePictureParams{
 		Preview: preview,
 	}
-	info, err := c.client.GetProfilePictureInfo(ctx, target, params)
+	info, err := client.GetProfilePictureInfo(ctx, target, params)
 	if err != nil {
 		return nil, err
 	}
@@ -359,11 +462,12 @@ func (c *ClientAdapter) GetProfilePicture(ctx context.Context, jidStr string, pr
 func (c *ClientAdapter) SetProfilePicture(ctx context.Context, jidStr string, avatar []byte) (string, error) {
 	var target types.JID
 	jidStr = strings.TrimSpace(jidStr)
+	client := c.getClient()
 	if jidStr == "" || strings.EqualFold(jidStr, "me") || strings.EqualFold(jidStr, "self") {
-		if c.client.Store == nil || c.client.Store.ID == nil {
+		if client.Store == nil || client.Store.ID == nil {
 			return "", fmt.Errorf("client is not logged in")
 		}
-		target = c.client.Store.ID.ToNonAD()
+		target = client.Store.ID.ToNonAD()
 	} else {
 		var err error
 		target, err = c.parseJID(jidStr)
@@ -372,11 +476,11 @@ func (c *ClientAdapter) SetProfilePicture(ctx context.Context, jidStr string, av
 		}
 	}
 
-	return c.client.SetGroupPhoto(ctx, target, avatar)
+	return client.SetGroupPhoto(ctx, target, avatar)
 }
 
 func (c *ClientAdapter) SetStatusMessage(ctx context.Context, status string) error {
-	return c.client.SetStatusMessage(ctx, types.SetStatusInput{
+	return c.getClient().SetStatusMessage(ctx, types.SetStatusInput{
 		Text: &status,
 	})
 }
@@ -386,25 +490,14 @@ func (c *ClientAdapter) SendStatusBroadcast(ctx context.Context, status domain.S
 		mediaMsg := domain.MediaMessage{
 			Recipient: types.StatusBroadcastJID.String(),
 			Type:      status.Type,
-			FileName:  status.FileName,
-			MimeType:  status.MimeType,
-			Caption:   status.Caption,
 			Data:      status.Data,
-			DataB64:   status.DataB64,
+			Caption:   status.Text,
 		}
 		return c.SendMediaMessage(ctx, types.StatusBroadcastJID.String(), mediaMsg)
 	}
 
-	text := status.Text
-	if text == "" {
-		text = status.Caption
-	}
-	if text == "" {
-		return "", fmt.Errorf("text is required for text status broadcast")
-	}
-
 	extText := &waE2E.ExtendedTextMessage{
-		Text: proto.String(text),
+		Text: proto.String(status.Text),
 	}
 	if status.BackgroundColor != 0 {
 		extText.BackgroundArgb = proto.Uint32(status.BackgroundColor)
@@ -417,7 +510,7 @@ func (c *ClientAdapter) SendStatusBroadcast(ctx context.Context, status domain.S
 		ExtendedTextMessage: extText,
 	}
 
-	resp, err := c.client.SendMessage(ctx, types.StatusBroadcastJID, waMsg)
+	resp, err := c.getClient().SendMessage(ctx, types.StatusBroadcastJID, waMsg)
 	if err != nil {
 		return "", err
 	}
@@ -437,8 +530,9 @@ func (c *ClientAdapter) RevokeMessage(ctx context.Context, chatJID string, messa
 		}
 	}
 
-	revokeMsg := c.client.BuildRevoke(chat, types.EmptyJID, types.MessageID(messageID))
-	_, err := c.client.SendMessage(ctx, chat, revokeMsg)
+	client := c.getClient()
+	revokeMsg := client.BuildRevoke(chat, types.EmptyJID, types.MessageID(messageID))
+	_, err := client.SendMessage(ctx, chat, revokeMsg)
 	return err
 }
 
