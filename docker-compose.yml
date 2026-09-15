@@ -10,6 +10,9 @@ services:
     stop_grace_period: 30s
     expose:
       - "8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
     environment:
       - PORT=8080
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
