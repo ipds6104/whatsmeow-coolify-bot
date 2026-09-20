@@ -487,11 +487,15 @@ func (c *ClientAdapter) SetStatusMessage(ctx context.Context, status string) err
 
 func (c *ClientAdapter) SendStatusBroadcast(ctx context.Context, status domain.StatusBroadcastMessage) (string, error) {
 	if status.Type == domain.MediaTypeImage || status.Type == domain.MediaTypeVideo {
+		caption := status.Caption
+		if caption == "" {
+			caption = status.Text
+		}
 		mediaMsg := domain.MediaMessage{
 			Recipient: types.StatusBroadcastJID.String(),
 			Type:      status.Type,
 			Data:      status.Data,
-			Caption:   status.Text,
+			Caption:   caption,
 		}
 		return c.SendMediaMessage(ctx, types.StatusBroadcastJID.String(), mediaMsg)
 	}
