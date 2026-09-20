@@ -1,10 +1,15 @@
 package whatsmeow
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"log"
 	"net/http"
 	"regexp"
@@ -459,6 +464,22 @@ func (c *ClientAdapter) GetProfilePicture(ctx context.Context, jidStr string, pr
 	}, nil
 }
 
+func ensureJPEG(data []byte) ([]byte, error) {
+	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return data, nil
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		// If decoding fails, return original data so whatsmeow can validate
+		return data, nil
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		return nil, fmt.Errorf("failed to encode avatar to JPEG: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
 func (c *ClientAdapter) SetProfilePicture(ctx context.Context, jidStr string, avatar []byte) (string, error) {
 	var target types.JID
 	jidStr = strings.TrimSpace(jidStr)
@@ -467,12 +488,25 @@ func (c *ClientAdapter) SetProfilePicture(ctx context.Context, jidStr string, av
 		if client.Store == nil || client.Store.ID == nil {
 			return "", fmt.Errorf("client is not logged in")
 		}
-		target = client.Store.ID.ToNonAD()
+		// In whatsmeow, SetGroupPhoto with types.EmptyJID updates the user's own profile photo
+		target = types.EmptyJID
 	} else {
 		var err error
 		target, err = c.parseJID(jidStr)
 		if err != nil {
 			return "", fmt.Errorf("invalid target JID %q: %w", jidStr, err)
+		}
+		// If caller passed the bot's own individual JID, normalize to EmptyJID for setting own profile photo
+		if client.Store != nil && client.Store.ID != nil && target == client.Store.ID.ToNonAD() {
+			target = types.EmptyJID
+		}
+	}
+
+	if len(avatar) > 0 {
+		var err error
+		avatar, err = ensureJPEG(avatar)
+		if err != nil {
+			return "", err
 		}
 	}
 
