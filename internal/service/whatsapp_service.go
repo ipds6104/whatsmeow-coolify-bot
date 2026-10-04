@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
@@ -12,8 +13,9 @@ import (
 // WhatsAppServiceImpl implements ports.WhatsAppService orchestrating messaging and anti-ban safeguards.
 type WhatsAppServiceImpl struct {
 	client ports.WhatsAppClientPort
-	guard  ports.AntiBanGuardPort
-	store  ports.SessionStorePort
+	guard     ports.AntiBanGuardPort
+	store     ports.SessionStorePort
+	audioProc ports.AudioProcessorPort
 }
 
 var _ ports.WhatsAppService = (*WhatsAppServiceImpl)(nil)
@@ -22,11 +24,13 @@ func NewWhatsAppService(
 	client ports.WhatsAppClientPort,
 	guard ports.AntiBanGuardPort,
 	store ports.SessionStorePort,
+	audioProc ports.AudioProcessorPort,
 ) *WhatsAppServiceImpl {
 	return &WhatsAppServiceImpl{
-		client: client,
-		guard:  guard,
-		store:  store,
+		client:    client,
+		guard:     guard,
+		store:     store,
+		audioProc: audioProc,
 	}
 }
 
@@ -79,6 +83,27 @@ func (w *WhatsAppServiceImpl) SendMedia(ctx context.Context, msg domain.MediaMes
 
 	if msg.Recipient == "" || len(msg.Data) == 0 {
 		return "", domain.ErrInvalidRecipient
+	}
+
+	// Enrich audio/voice metadata if missing (SOLID: delegates to audio processor port)
+	if (msg.Type == domain.MediaTypeAudio || msg.Type == domain.MediaTypeVoice) && w.audioProc != nil {
+		if msg.Seconds == 0 || len(msg.Waveform) == 0 {
+			meta, err := w.audioProc.ProcessAudio(ctx, msg.Data, msg.MimeType)
+			if err == nil {
+				if msg.Seconds == 0 {
+					msg.Seconds = meta.DurationSeconds
+				}
+				if len(msg.Waveform) == 0 {
+					msg.Waveform = meta.Waveform
+				}
+			}
+		}
+		if msg.Type == domain.MediaTypeVoice {
+			msg.PTT = true
+			if !strings.Contains(strings.ToLower(msg.MimeType), "opus") {
+				msg.MimeType = "audio/ogg; codecs=opus"
+			}
+		}
 	}
 
 	// Anti-ban throttling

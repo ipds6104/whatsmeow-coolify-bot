@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/antiban"
+	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/audio"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/backup"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/rest"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/domain"
@@ -36,7 +37,7 @@ func setupTestRouter(t *testing.T, apiKey string) http.Handler {
 	}
 
 	sessionSvc := service.NewSessionService(mockCli, mockNotif, mockStore, "6281234567890", "TestBot")
-	waSvc := service.NewWhatsAppService(mockCli, guard, mockStore)
+	waSvc := service.NewWhatsAppService(mockCli, guard, mockStore, audio.NewProcessor())
 	backupSvc := service.NewBackupService(mockCli, mockStore, fileStore)
 
 	return rest.NewRouter(rest.RouterConfig{

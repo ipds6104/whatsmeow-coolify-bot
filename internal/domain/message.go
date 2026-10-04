@@ -29,7 +29,10 @@ type MediaMessage struct {
 	FileName  string    `json:"file_name"`
 	MimeType  string    `json:"mime_type"`
 	Caption   string    `json:"caption,omitempty"`
-	Data      []byte    `json:"-"` // Binary payload (not rendered in JSON)
+	Seconds   uint32    `json:"seconds,omitempty"`   // Audio/Voice/Video duration in seconds
+	Waveform  []byte    `json:"waveform,omitempty"`  // Voice note 64-byte waveform visualization
+	PTT       bool      `json:"ptt,omitempty"`       // Push-to-talk flag for voice notes
+	Data      []byte    `json:"-"`                   // Binary payload (not rendered in JSON)
 	DataB64   string    `json:"data_base64,omitempty"`
 	ReplyToID string    `json:"reply_to_id,omitempty"`
 }

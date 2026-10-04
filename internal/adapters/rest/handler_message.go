@@ -60,6 +60,14 @@ func (h *MessageHandler) SendMedia(w http.ResponseWriter, r *http.Request) {
 		msg.Caption = r.FormValue("caption")
 		msg.Type = domain.MediaType(r.FormValue("type"))
 		msg.ReplyToID = r.FormValue("reply_to_id")
+		if secStr := r.FormValue("seconds"); secStr != "" {
+			if s, err := strconv.ParseUint(secStr, 10, 32); err == nil {
+				msg.Seconds = uint32(s)
+			}
+		}
+		if pttStr := r.FormValue("ptt"); pttStr != "" {
+			msg.PTT = pttStr == "true" || pttStr == "1"
+		}
 
 		file, header, err := r.FormFile("file")
 		if err != nil {

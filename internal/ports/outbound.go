@@ -64,3 +64,15 @@ type BackupStorePort interface {
 	ListBackups(ctx context.Context) ([]domain.BackupResult, error)
 	PurgeOldBackups(ctx context.Context, retention time.Duration) (int, error)
 }
+
+// AudioMetadata contains extracted metadata for media rendering in WhatsApp.
+type AudioMetadata struct {
+	DurationSeconds uint32
+	Waveform        []byte
+}
+
+// AudioProcessorPort defines the outbound driven port for inspecting, validating, and generating metadata for audio payloads.
+type AudioProcessorPort interface {
+	ProcessAudio(ctx context.Context, data []byte, mimeType string) (AudioMetadata, error)
+}
+

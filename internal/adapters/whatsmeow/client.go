@@ -301,18 +301,33 @@ func (c *ClientAdapter) SendMediaMessage(ctx context.Context, to string, media d
 			ContextInfo:   ctxInfo,
 		}
 	case domain.MediaTypeAudio, domain.MediaTypeVoice:
-		isPTT := media.Type == domain.MediaTypeVoice
-		msg.AudioMessage = &waE2E.AudioMessage{
+		isPTT := media.Type == domain.MediaTypeVoice || media.PTT
+		mimetype := media.MimeType
+		if isPTT || strings.Contains(strings.ToLower(mimetype), "ogg") || strings.Contains(strings.ToLower(mimetype), "opus") {
+			mimetype = "audio/ogg; codecs=opus"
+		}
+
+		seconds := media.Seconds
+		if seconds == 0 {
+			seconds = 1
+		}
+
+		audioMsg := &waE2E.AudioMessage{
 			URL:           proto.String(uploaded.URL),
 			DirectPath:    proto.String(uploaded.DirectPath),
 			MediaKey:      uploaded.MediaKey,
-			Mimetype:      proto.String(media.MimeType),
+			Mimetype:      proto.String(mimetype),
 			FileEncSHA256: uploaded.FileEncSHA256,
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uploaded.FileLength),
+			Seconds:       proto.Uint32(seconds),
 			PTT:           proto.Bool(isPTT),
 			ContextInfo:   ctxInfo,
 		}
+		if len(media.Waveform) > 0 {
+			audioMsg.Waveform = media.Waveform
+		}
+		msg.AudioMessage = audioMsg
 	default:
 		fileName := media.FileName
 		if fileName == "" {

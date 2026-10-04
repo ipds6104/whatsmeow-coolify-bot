@@ -17,6 +17,7 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/antiban"
+	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/audio"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/backup"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/discord"
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/adapters/postgres"
@@ -94,10 +95,13 @@ func main() {
 		cfg.WAClientName,
 	)
 
+	audioProcessor := audio.NewProcessor()
+
 	waService := service.NewWhatsAppService(
 		clientAdapter,
 		guard,
 		pgStore,
+		audioProcessor,
 	)
 
 	backupService := service.NewBackupService(
