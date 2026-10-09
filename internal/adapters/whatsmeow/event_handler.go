@@ -235,8 +235,50 @@ func (h *EventHandler) HandleEvent(rawEvt interface{}) {
 	}
 }
 
+// unwrapMessage recursively unwraps modern WhatsApp nested wrappers such as ViewOnce, Ephemeral, and DocumentWithCaption.
+func unwrapMessage(msg *waE2E.Message) *waE2E.Message {
+	if msg == nil {
+		return nil
+	}
+	if v1 := msg.GetViewOnceMessage(); v1 != nil && v1.GetMessage() != nil {
+		return unwrapMessage(v1.GetMessage())
+	}
+	if v2 := msg.GetViewOnceMessageV2(); v2 != nil && v2.GetMessage() != nil {
+		return unwrapMessage(v2.GetMessage())
+	}
+	if v2Ext := msg.GetViewOnceMessageV2Extension(); v2Ext != nil && v2Ext.GetMessage() != nil {
+		return unwrapMessage(v2Ext.GetMessage())
+	}
+	if ephem := msg.GetEphemeralMessage(); ephem != nil && ephem.GetMessage() != nil {
+		return unwrapMessage(ephem.GetMessage())
+	}
+	if docCap := msg.GetDocumentWithCaptionMessage(); docCap != nil && docCap.GetMessage() != nil {
+		return unwrapMessage(docCap.GetMessage())
+	}
+	return msg
+}
+
+// extractPhoneFromVCard parses canonical phone number from a vCard text payload.
+func extractPhoneFromVCard(vcard string) string {
+	for _, line := range strings.Split(vcard, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(line), "TEL") {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				return strings.TrimSpace(parts[len(parts)-1])
+			}
+		}
+	}
+	return ""
+}
+
 func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Message) {
 	if evt == nil || evt.Message == nil {
+		return
+	}
+
+	rawMsg := unwrapMessage(evt.Message)
+	if rawMsg == nil {
 		return
 	}
 
@@ -267,12 +309,12 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 	var mediaInfo *domain.MediaDownloadInfo
 	var ctxInfo *waE2E.ContextInfo
 
-	if conv := evt.Message.GetConversation(); conv != "" {
+	if conv := rawMsg.GetConversation(); conv != "" {
 		text = conv
-	} else if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
+	} else if ext := rawMsg.GetExtendedTextMessage(); ext != nil {
 		text = ext.GetText()
 		ctxInfo = ext.GetContextInfo()
-	} else if img := evt.Message.GetImageMessage(); img != nil {
+	} else if img := rawMsg.GetImageMessage(); img != nil {
 		text = img.GetCaption()
 		ctxInfo = img.GetContextInfo()
 		mediaType = string(domain.MediaTypeImage)
@@ -286,7 +328,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 			MimeType:    img.GetMimetype(),
 			MediaType:   mediaType,
 		}
-	} else if vid := evt.Message.GetVideoMessage(); vid != nil {
+	} else if vid := rawMsg.GetVideoMessage(); vid != nil {
 		text = vid.GetCaption()
 		ctxInfo = vid.GetContextInfo()
 		mediaType = string(domain.MediaTypeVideo)
@@ -300,7 +342,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 			MimeType:    vid.GetMimetype(),
 			MediaType:   mediaType,
 		}
-	} else if aud := evt.Message.GetAudioMessage(); aud != nil {
+	} else if aud := rawMsg.GetAudioMessage(); aud != nil {
 		ctxInfo = aud.GetContextInfo()
 		mediaType = string(domain.MediaTypeAudio)
 		hasMedia = true
@@ -313,7 +355,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 			MimeType:    aud.GetMimetype(),
 			MediaType:   mediaType,
 		}
-	} else if doc := evt.Message.GetDocumentMessage(); doc != nil {
+	} else if doc := rawMsg.GetDocumentMessage(); doc != nil {
 		text = doc.GetCaption()
 		ctxInfo = doc.GetContextInfo()
 		mediaType = string(domain.MediaTypeDocument)
@@ -332,10 +374,92 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 			MediaType:   mediaType,
 			Filename:    filename,
 		}
-	} else if stk := evt.Message.GetStickerMessage(); stk != nil {
+	} else if stk := rawMsg.GetStickerMessage(); stk != nil {
 		ctxInfo = stk.GetContextInfo()
 		mediaType = "sticker"
 		hasMedia = true
+	} else if contact := rawMsg.GetContactMessage(); contact != nil {
+		displayName := contact.GetDisplayName()
+		vcard := contact.GetVcard()
+		phone := extractPhoneFromVCard(vcard)
+		if phone != "" {
+			text = fmt.Sprintf("[Kontak: %s (%s)]", displayName, phone)
+		} else {
+			text = fmt.Sprintf("[Kontak: %s]", displayName)
+		}
+		if vcard != "" {
+			text += "\n" + vcard
+		}
+		ctxInfo = contact.GetContextInfo()
+	} else if contacts := rawMsg.GetContactsArrayMessage(); contacts != nil {
+		displayName := contacts.GetDisplayName()
+		var lines []string
+		lines = append(lines, fmt.Sprintf("[Daftar Kontak: %s]", displayName))
+		for _, c := range contacts.GetContacts() {
+			cName := c.GetDisplayName()
+			cPhone := extractPhoneFromVCard(c.GetVcard())
+			if cPhone != "" {
+				lines = append(lines, fmt.Sprintf("• %s: %s", cName, cPhone))
+			} else {
+				lines = append(lines, fmt.Sprintf("• %s", cName))
+			}
+		}
+		text = strings.Join(lines, "\n")
+		ctxInfo = contacts.GetContextInfo()
+	} else if loc := rawMsg.GetLocationMessage(); loc != nil {
+		lat := loc.GetDegreesLatitude()
+		lon := loc.GetDegreesLongitude()
+		name := loc.GetName()
+		addr := loc.GetAddress()
+		var desc []string
+		if name != "" {
+			desc = append(desc, name)
+		}
+		if addr != "" {
+			desc = append(desc, addr)
+		}
+		locInfo := strings.Join(desc, ", ")
+		if locInfo != "" {
+			text = fmt.Sprintf("[Lokasi: %s] https://maps.google.com/?q=%f,%f", locInfo, lat, lon)
+		} else {
+			text = fmt.Sprintf("[Lokasi] https://maps.google.com/?q=%f,%f", lat, lon)
+		}
+		if loc.GetComment() != "" {
+			text += "\n" + loc.GetComment()
+		}
+		ctxInfo = loc.GetContextInfo()
+	} else if liveLoc := rawMsg.GetLiveLocationMessage(); liveLoc != nil {
+		lat := liveLoc.GetDegreesLatitude()
+		lon := liveLoc.GetDegreesLongitude()
+		text = fmt.Sprintf("[Live Location] https://maps.google.com/?q=%f,%f", lat, lon)
+		if liveLoc.GetCaption() != "" {
+			text += "\n" + liveLoc.GetCaption()
+		}
+		ctxInfo = liveLoc.GetContextInfo()
+	} else if poll := rawMsg.GetPollCreationMessage(); poll != nil {
+		name := poll.GetName()
+		var opts []string
+		for _, opt := range poll.GetOptions() {
+			opts = append(opts, "• "+opt.GetOptionName())
+		}
+		text = fmt.Sprintf("[Polling: %s]\n%s", name, strings.Join(opts, "\n"))
+		ctxInfo = poll.GetContextInfo()
+	} else if pollV2 := rawMsg.GetPollCreationMessageV2(); pollV2 != nil {
+		name := pollV2.GetName()
+		var opts []string
+		for _, opt := range pollV2.GetOptions() {
+			opts = append(opts, "• "+opt.GetOptionName())
+		}
+		text = fmt.Sprintf("[Polling: %s]\n%s", name, strings.Join(opts, "\n"))
+		ctxInfo = pollV2.GetContextInfo()
+	} else if pollV3 := rawMsg.GetPollCreationMessageV3(); pollV3 != nil {
+		name := pollV3.GetName()
+		var opts []string
+		for _, opt := range pollV3.GetOptions() {
+			opts = append(opts, "• "+opt.GetOptionName())
+		}
+		text = fmt.Sprintf("[Polling: %s]\n%s", name, strings.Join(opts, "\n"))
+		ctxInfo = pollV3.GetContextInfo()
 	}
 
 	// Extract Quoted Message & Mention metadata from ContextInfo
@@ -354,7 +478,7 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 		}
 
 		var quotedText string
-		if qMsg := ctxInfo.GetQuotedMessage(); qMsg != nil {
+		if qMsg := unwrapMessage(ctxInfo.GetQuotedMessage()); qMsg != nil {
 			if qConv := qMsg.GetConversation(); qConv != "" {
 				quotedText = qConv
 			} else if qExt := qMsg.GetExtendedTextMessage(); qExt != nil {
@@ -378,6 +502,19 @@ func (h *EventHandler) handleIncomingMessage(ctx context.Context, evt *events.Me
 				quotedText = "[Audio/Voice Note]"
 			} else if qStk := qMsg.GetStickerMessage(); qStk != nil {
 				quotedText = "[Stiker]"
+			} else if qContact := qMsg.GetContactMessage(); qContact != nil {
+				qPhone := extractPhoneFromVCard(qContact.GetVcard())
+				if qPhone != "" {
+					quotedText = fmt.Sprintf("[Kontak: %s (%s)]", qContact.GetDisplayName(), qPhone)
+				} else {
+					quotedText = fmt.Sprintf("[Kontak: %s]", qContact.GetDisplayName())
+				}
+			} else if qContacts := qMsg.GetContactsArrayMessage(); qContacts != nil {
+				quotedText = fmt.Sprintf("[Daftar Kontak: %s]", qContacts.GetDisplayName())
+			} else if qLoc := qMsg.GetLocationMessage(); qLoc != nil {
+				quotedText = fmt.Sprintf("[Lokasi: %s]", qLoc.GetName())
+			} else if qPoll := qMsg.GetPollCreationMessage(); qPoll != nil {
+				quotedText = fmt.Sprintf("[Polling: %s]", qPoll.GetName())
 			}
 		}
 
