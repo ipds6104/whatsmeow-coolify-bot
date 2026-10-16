@@ -29,23 +29,31 @@ import (
 	"github.com/ipds6104/whatsmeow-coolify-bot/internal/ports"
 )
 
+type cachedGroup struct {
+	info      *types.GroupInfo
+	fetchedAt time.Time
+}
+
 // ClientAdapter wraps *whatsmeow.Client to implement ports.WhatsAppClientPort.
 type ClientAdapter struct {
-	client    *whatsmeow.Client
-	container *sqlstore.Container
-	waLogger  waLog.Logger
-	handlers  []func(evt interface{})
-	mu        sync.RWMutex
+	client       *whatsmeow.Client
+	container    *sqlstore.Container
+	waLogger     waLog.Logger
+	handlers     []func(evt interface{})
+	mu           sync.RWMutex
+	groupCache   map[types.JID]cachedGroup
+	groupCacheMu sync.RWMutex
 }
 
 var _ ports.WhatsAppClientPort = (*ClientAdapter)(nil)
 
 func NewClientAdapter(client *whatsmeow.Client, container *sqlstore.Container, waLogger waLog.Logger) *ClientAdapter {
 	return &ClientAdapter{
-		client:    client,
-		container: container,
-		waLogger:  waLogger,
-		handlers:  make([]func(evt interface{}), 0),
+		client:     client,
+		container:  container,
+		waLogger:   waLogger,
+		handlers:   make([]func(evt interface{}), 0),
+		groupCache: make(map[types.JID]cachedGroup),
 	}
 }
 
@@ -175,7 +183,167 @@ func (c *ClientAdapter) PairPhone(ctx context.Context, phone string, clientDispl
 	return code, err
 }
 
+func (c *ClientAdapter) getGroupInfoCached(ctx context.Context, groupJID types.JID) *types.GroupInfo {
+	c.groupCacheMu.RLock()
+	cached, ok := c.groupCache[groupJID]
+	c.groupCacheMu.RUnlock()
+
+	if ok && time.Since(cached.fetchedAt) < 10*time.Minute && cached.info != nil {
+		return cached.info
+	}
+
+	client := c.getClient()
+	if client == nil || !client.IsConnected() {
+		if ok {
+			return cached.info
+		}
+		return nil
+	}
+
+	info, err := client.GetGroupInfo(ctx, groupJID)
+	if err != nil {
+		if ok {
+			return cached.info
+		}
+		return nil
+	}
+
+	c.groupCacheMu.Lock()
+	if c.groupCache == nil {
+		c.groupCache = make(map[types.JID]cachedGroup)
+	}
+	c.groupCache[groupJID] = cachedGroup{
+		info:      info,
+		fetchedAt: time.Now(),
+	}
+	c.groupCacheMu.Unlock()
+
+	return info
+}
+
 var mentionRegex = regexp.MustCompile(`@(\d{8,16})`)
+
+type lidStoreReader interface {
+	GetLIDForPN(ctx context.Context, pn types.JID) (types.JID, error)
+	GetPNForLID(ctx context.Context, lid types.JID) (types.JID, error)
+}
+
+func resolveMentions(
+	ctx context.Context,
+	text string,
+	targetJID types.JID,
+	explicitMentions []string,
+	groupInfo *types.GroupInfo,
+	lidStore lidStoreReader,
+) (string, []string) {
+	mentionedJIDs := make([]string, 0, len(explicitMentions)+4)
+	existing := make(map[string]bool)
+
+	// 1. Process explicit mentions supplied by caller
+	for _, m := range explicitMentions {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		if !strings.Contains(m, "@") {
+			if len(m) >= 14 && (strings.HasPrefix(m, "1") || strings.HasPrefix(m, "2") || strings.HasPrefix(m, "8")) && !strings.HasPrefix(m, "62") {
+				m = m + "@" + types.HiddenUserServer
+			} else {
+				m = m + "@" + types.DefaultUserServer
+			}
+		}
+		if !existing[m] {
+			mentionedJIDs = append(mentionedJIDs, m)
+			existing[m] = true
+		}
+	}
+
+	// 2. Process text mentions
+	if targetJID.Server == types.GroupServer {
+		matches := mentionRegex.FindAllStringSubmatch(text, -1)
+		for _, match := range matches {
+			if len(match) <= 1 {
+				continue
+			}
+			rawNum := match[1] // e.g. "6289625345646" or "87097809592405"
+
+			var resolvedJID types.JID
+			var resolved bool
+
+			// A. Match against group participants if available
+			if groupInfo != nil {
+				for _, p := range groupInfo.Participants {
+					if (p.PhoneNumber.User != "" && p.PhoneNumber.User == rawNum) ||
+						(p.LID.User != "" && p.LID.User == rawNum) ||
+						(p.JID.User == rawNum) {
+						if !p.LID.IsEmpty() {
+							resolvedJID = p.LID
+						} else {
+							resolvedJID = p.JID
+						}
+						resolved = true
+						break
+					}
+				}
+			}
+
+			// B. Fallback to SQL store LID mapping if available
+			if !resolved && lidStore != nil {
+				pnJID := types.NewJID(rawNum, types.DefaultUserServer)
+				if lid, err := lidStore.GetLIDForPN(ctx, pnJID); err == nil && !lid.IsEmpty() {
+					resolvedJID = lid
+					resolved = true
+				} else {
+					lidTest := types.NewJID(rawNum, types.HiddenUserServer)
+					if pn, err := lidStore.GetPNForLID(ctx, lidTest); err == nil && !pn.IsEmpty() {
+						resolvedJID = lidTest
+						resolved = true
+					}
+				}
+			}
+
+			if resolved && !resolvedJID.IsEmpty() {
+				// In an LID group, WhatsApp requires the token in text to match the LID number
+				if resolvedJID.Server == types.HiddenUserServer && rawNum != resolvedJID.User {
+					text = strings.ReplaceAll(text, "@"+rawNum, "@"+resolvedJID.User)
+				}
+				jidStr := resolvedJID.String()
+				if !existing[jidStr] {
+					mentionedJIDs = append(mentionedJIDs, jidStr)
+					existing[jidStr] = true
+				}
+			} else {
+				// Fallback if not resolved in group:
+				// Determine if rawNum looks like an LID or standard PN. NEVER append both!
+				var fallbackJID string
+				if len(rawNum) >= 14 && (strings.HasPrefix(rawNum, "1") || strings.HasPrefix(rawNum, "2") || strings.HasPrefix(rawNum, "8")) && !strings.HasPrefix(rawNum, "62") {
+					fallbackJID = rawNum + "@" + types.HiddenUserServer
+				} else {
+					fallbackJID = rawNum + "@" + types.DefaultUserServer
+				}
+				if !existing[fallbackJID] {
+					mentionedJIDs = append(mentionedJIDs, fallbackJID)
+					existing[fallbackJID] = true
+				}
+			}
+		}
+	} else {
+		// 1-on-1 chats: standard user mention
+		matches := mentionRegex.FindAllStringSubmatch(text, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				num := match[1]
+				userJID := num + "@" + types.DefaultUserServer
+				if !existing[userJID] {
+					mentionedJIDs = append(mentionedJIDs, userJID)
+					existing[userJID] = true
+				}
+			}
+		}
+	}
+
+	return text, mentionedJIDs
+}
 
 func (c *ClientAdapter) SendTextMessage(ctx context.Context, to string, text string, replyID string, mentions []string) (string, error) {
 	targetJID, err := c.parseJID(to)
@@ -183,35 +351,18 @@ func (c *ClientAdapter) SendTextMessage(ctx context.Context, to string, text str
 		return "", err
 	}
 
-	// Prepare mentioned JIDs
-	mentionedJIDs := make([]string, 0, len(mentions)+4)
-	existing := make(map[string]bool)
-
-	for _, m := range mentions {
-		m = strings.TrimSpace(m)
-		if m != "" && !existing[m] {
-			mentionedJIDs = append(mentionedJIDs, m)
-			existing[m] = true
-		}
+	var groupInfo *types.GroupInfo
+	if targetJID.Server == types.GroupServer {
+		groupInfo = c.getGroupInfoCached(ctx, targetJID)
 	}
 
-	// Auto-detect @<digits> in text (e.g. @6289625345646 or @87097809592405)
-	matches := mentionRegex.FindAllStringSubmatch(text, -1)
-	for _, match := range matches {
-		if len(match) > 1 {
-			num := match[1]
-			userJID := num + "@s.whatsapp.net"
-			if !existing[userJID] {
-				mentionedJIDs = append(mentionedJIDs, userJID)
-				existing[userJID] = true
-			}
-			lidJID := num + "@lid"
-			if !existing[lidJID] {
-				mentionedJIDs = append(mentionedJIDs, lidJID)
-				existing[lidJID] = true
-			}
-		}
+	client := c.getClient()
+	var lidStore lidStoreReader
+	if client != nil && client.Store != nil && client.Store.LIDs != nil {
+		lidStore = client.Store.LIDs
 	}
+
+	processedText, mentionedJIDs := resolveMentions(ctx, text, targetJID, mentions, groupInfo, lidStore)
 
 	msg := &waE2E.Message{}
 
@@ -225,14 +376,14 @@ func (c *ClientAdapter) SendTextMessage(ctx context.Context, to string, text str
 		}
 
 		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
-			Text:        proto.String(text),
+			Text:        proto.String(processedText),
 			ContextInfo: ctxInfo,
 		}
 	} else {
-		msg.Conversation = proto.String(text)
+		msg.Conversation = proto.String(processedText)
 	}
 
-	resp, err := c.getClient().SendMessage(ctx, targetJID, msg)
+	resp, err := client.SendMessage(ctx, targetJID, msg)
 	if err != nil {
 		return "", err
 	}
@@ -606,9 +757,13 @@ func mapGroupInfo(raw *types.GroupInfo) domain.GroupInfo {
 
 	participants := make([]domain.GroupParticipant, 0, len(raw.Participants))
 	for _, p := range raw.Participants {
+		phone := p.PhoneNumber.User
+		if phone == "" && p.JID.Server != types.HiddenUserServer {
+			phone = p.JID.User
+		}
 		participants = append(participants, domain.GroupParticipant{
 			JID:          p.JID.String(),
-			PhoneNumber:  p.JID.User,
+			PhoneNumber:  phone,
 			IsAdmin:      p.IsAdmin,
 			IsSuperAdmin: p.IsSuperAdmin,
 		})
