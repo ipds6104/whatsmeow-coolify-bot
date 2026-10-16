@@ -20,6 +20,7 @@ type TextMessage struct {
 	Content       string   `json:"content"`                // Message body
 	ReplyToID     string   `json:"reply_to_id,omitempty"`  // Optional message ID being quoted
 	MentionedJIDs []string `json:"mentioned_jids,omitempty"` // Optional WhatsApp JIDs/LIDs to tag/mention
+	Mentions      []string `json:"mentions,omitempty"`       // Alias for mentioned_jids
 }
 
 // MediaMessage represents a payload for sending media files to WhatsApp.
